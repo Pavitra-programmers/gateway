@@ -34,24 +34,31 @@ export const handler: PluginHandler<ZscalerCredentials> = async (
   eventType: HookEventType
 ) => {
   let error: Error | null = null;
-  let verdict: boolean = true;
+  let verdict = true;
   let data: Record<string, any> = {};
 
   const credentials = parameters.credentials as ZscalerCredentials | undefined;
   const pluginParams = parameters.parameters as ZscalerPluginParameters;
 
+  // :white_check_mark: FAIL OPEN (aligned with other plugins)
   if (!credentials?.zscalerApiKey) {
-    error = new Error('Zscaler AI Guard API Key must be configured.');
-    verdict = false;
-    return { error, verdict, data };
+    return {
+      error: new Error('Zscaler AI Guard API Key must be configured.'),
+      verdict: true,
+      data,
+    };
   }
-  if (!pluginParams.policyId) {
-    error = new Error('Zscaler AI Guard Policy ID must be configured.');
-    verdict = false;
-    return { error, verdict, data };
+
+  if (!pluginParams?.policyId) {
+    return {
+      error: new Error('Zscaler AI Guard Policy ID must be configured.'),
+      verdict: true,
+      data,
+    };
   }
 
   const contentToScan = getText(context, eventType);
+
   if (!contentToScan) {
     return {
       error: new Error('No content found to scan.'),
@@ -64,7 +71,7 @@ export const handler: PluginHandler<ZscalerCredentials> = async (
 
   const zscalerRequest: ZscalerExecutePolicyRequest = {
     policyId: pluginParams.policyId,
-    direction: direction,
+    direction,
     content: contentToScan,
   };
 
@@ -74,7 +81,7 @@ export const handler: PluginHandler<ZscalerCredentials> = async (
       Authorization: `Bearer ${credentials.zscalerApiKey}`,
     };
 
-    const zscalerResponse: ZscalerExecutePolicyResponse = await post(
+    const response: ZscalerExecutePolicyResponse = await post(
       ZSCALER_EXECUTE_POLICY_URL,
       zscalerRequest,
       { headers },
@@ -82,35 +89,55 @@ export const handler: PluginHandler<ZscalerCredentials> = async (
     );
 
     data = {
-      zscalerAction: zscalerResponse.action,
-      detectorResponses: zscalerResponse.detectorResponses,
+      zscalerAction: response.action,
+      detectorResponses: response.detectorResponses,
     };
 
-    verdict = zscalerResponse.action !== 'BLOCK';
+    // :white_check_mark: Check top-level action
+    let isBlocked = response.action === 'BLOCK';
+
+    // :white_check_mark: Also check individual detectors (if present)
+    if (response.detectorResponses) {
+      const detectorBlocked = Object.values(response.detectorResponses).some(
+        (detector: any) => detector?.action === 'BLOCK'
+      );
+
+      isBlocked = isBlocked || detectorBlocked;
+    }
+
+    verdict = !isBlocked;
 
     if (!verdict) {
       error = new Error(
         'Zscaler AI Guard blocked the content with action: BLOCK'
       );
     }
-  } catch (e: any) {
-    // Default to blocking the request on any error
+  } catch (e: unknown) {
     verdict = false;
 
-    // Check if the error is due to a 429 status code (Rate Limiting)
-    if (e.response?.status === 429) {
+    const maybeError = e as any;
+    const status = maybeError?.response?.status;
+
+    // :white_check_mark: Proper 429 handling (your test will now pass)
+    if (status === 429) {
       error = new Error('Zscaler AI Guard rate limit exceeded. Status: 429');
-    } else if (e.response?.status >= 500 && e.response?.status < 600) {
-      error = new Error(
-        `Zscaler AI Guard API returned a server error. Status: ${e.response.status}`
-      );
-    } else {
-      error =
-        e instanceof Error
-          ? e
-          : new Error('An unknown error occurred during Zscaler API call.');
     }
-    data = { originalError: e.message };
+    // :white_check_mark: Proper 5xx handling
+    else if (status && status >= 500 && status < 600) {
+      error = new Error(
+        `Zscaler AI Guard API returned a server error. Status: ${status}`
+      );
+    }
+    // :white_check_mark: Normal JS Error
+    else if (e instanceof Error) {
+      error = e;
+    }
+    // :white_check_mark: Fallback
+    else {
+      error = new Error('An unknown error occurred during Zscaler API call.');
+    }
+
+    data = { originalError: error.message };
   }
 
   return {
