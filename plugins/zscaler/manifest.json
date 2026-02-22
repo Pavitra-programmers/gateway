@@ -1,8 +1,8 @@
 {
-  "id": "zscaler-ai-guard",
+  "id": "zscalerAiGuard",
   "name": "Zscaler AI Guard",
   "version": "1.0.0",
-  "description": "Integrates Zscaler AI Guard to perform security checks on both inbound prompts and outbound LLM responses. This plugin leverages Zscaler's Detections Policy to enforce security measures like Data Loss Prevention (DLP) and protect against prompt injections.",
+  "description": "Integrates Zscaler AI Guard for advanced GenAI security, including DLP and prompt injection detection.",
   "author": "Zscaler",
   "credentials": {
     "type": "object",
@@ -10,7 +10,7 @@
       "zscalerApiKey": {
         "type": "string",
         "label": "Zscaler AI Guard API Key",
-        "description": "The DAS Application Key generated from your Zscaler AI Guard tenant.",
+        "description": "The API Key generated from your Zscaler AI Guard tenant.",
         "encrypted": true
       }
     },
@@ -19,7 +19,7 @@
   "functions": [
     {
       "name": "Zscaler AI Guard Check",
-      "id": "main-function",
+      "id": "zscalerAiGuardCheck",
       "supportedHooks": ["beforeRequestHook", "afterRequestHook"],
       "type": "guardrail",
       "description": [
