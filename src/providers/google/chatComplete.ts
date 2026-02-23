@@ -20,10 +20,12 @@ import {
   transformGoogleTools,
   googleTools,
   getThoughtSignature,
+  hasToolCalls,
 } from '../google-vertex-ai/utils';
 import {
   ChatCompletionResponse,
   ErrorResponse,
+  FINISH_REASON,
   GroundingMetadata,
   Logprobs,
   ProviderConfig,
@@ -752,7 +754,7 @@ export const GoogleChatCompleteResponseTransform: (
             index: generation.index ?? idx,
             finish_reason:
               toolCalls.length > 0
-                ? 'tool_calls'
+                ? FINISH_REASON.tool_calls
                 : transformFinishReason(
                     generation.finishReason,
                     strictOpenAiCompliance
@@ -845,12 +847,10 @@ export const GoogleChatCompleteStreamChunkTransform: (
       choices:
         parsedChunk.candidates?.map((generation, index) => {
           let message: any = { role: 'assistant', content: '' };
-          const hasToolCalls = generation.content?.parts?.some(
-            (part) => part.functionCall
-          );
+          const containsToolCalls = hasToolCalls(generation.content?.parts);
           const finishReason = generation.finishReason
-            ? hasToolCalls
-              ? 'tool_calls'
+            ? containsToolCalls
+              ? FINISH_REASON.tool_calls
               : transformFinishReason(
                   generation.finishReason,
                   strictOpenAiCompliance

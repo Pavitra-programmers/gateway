@@ -24,6 +24,7 @@ import { GOOGLE_GENERATE_CONTENT_FINISH_REASON } from '../google/types';
 import {
   ChatCompletionResponse,
   ErrorResponse,
+  FINISH_REASON,
   Logprobs,
   ProviderConfig,
 } from '../types';
@@ -44,6 +45,7 @@ import {
   getMimeType,
   getThoughtSignature,
   googleTools,
+  hasToolCalls,
   recursivelyDeleteUnsupportedParameters,
   transformGeminiToolParameters,
   transformGoogleTools,
@@ -595,7 +597,7 @@ export const GoogleChatCompleteResponseTransform: (
             index: index,
             finish_reason:
               toolCalls.length > 0
-                ? 'tool_calls'
+                ? FINISH_REASON.tool_calls
                 : transformFinishReason(
                     generation.finishReason as GOOGLE_GENERATE_CONTENT_FINISH_REASON,
                     strictOpenAiCompliance
@@ -735,12 +737,10 @@ export const GoogleChatCompleteStreamChunkTransform: (
     provider: GOOGLE_VERTEX_AI,
     choices:
       parsedChunk.candidates?.map((generation, index) => {
-        const hasToolCalls = generation.content?.parts?.some(
-          (part) => part.functionCall
-        );
+        const containsToolCalls = hasToolCalls(generation.content?.parts);
         const finishReason = generation.finishReason
-          ? hasToolCalls
-            ? 'tool_calls'
+          ? containsToolCalls
+            ? FINISH_REASON.tool_calls
             : transformFinishReason(
                 parsedChunk.candidates[0]
                   .finishReason as GOOGLE_GENERATE_CONTENT_FINISH_REASON,
