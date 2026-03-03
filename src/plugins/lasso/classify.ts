@@ -46,45 +46,6 @@ function hasBlockAction(findings: Record<string, LassoFinding[]>): boolean {
   );
 }
 
-const CROCKFORD_BASE32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-const ULID_REGEX = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
-
-export function isValidULID(value: string): boolean {
-  return ULID_REGEX.test(value);
-}
-
-export function generateULID(): string {
-  const now = Date.now();
-
-  // Encode timestamp (48 bits → 10 base32 chars)
-  let timestamp = '';
-  let t = now;
-  for (let i = 0; i < 10; i++) {
-    timestamp = CROCKFORD_BASE32[t % 32] + timestamp;
-    t = Math.floor(t / 32);
-  }
-
-  // Encode random (80 bits → 16 base32 chars)
-  const randomBytes = new Uint8Array(10);
-  crypto.getRandomValues(randomBytes);
-
-  let random = '';
-  let bits = 0;
-  let numBits = 0;
-  let byteIdx = 0;
-  for (let i = 0; i < 16; i++) {
-    while (numBits < 5) {
-      bits = (bits << 8) | randomBytes[byteIdx++];
-      numBits += 8;
-    }
-    numBits -= 5;
-    random += CROCKFORD_BASE32[(bits >> numBits) & 31];
-    bits &= (1 << numBits) - 1;
-  }
-
-  return timestamp + random;
-}
-
 export const classify = async (
   credentials: Record<string, any>,
   data: LassoV3ClassifyRequest,
@@ -107,8 +68,7 @@ export const classify = async (
 export const handler: PluginHandler = async (
   context: PluginContext,
   parameters: PluginParameters,
-  eventType: HookEventType,
-  options
+  eventType: HookEventType
 ) => {
   let error = null;
   let verdict = true; // Default to allowing the request
@@ -152,20 +112,10 @@ export const handler: PluginHandler = async (
       messageType,
     };
 
-    // Map conversationId to sessionId (must be a valid ULID for v3 API)
+    // Map conversationId to sessionId
     const conversationId = parameters.conversationId as string | undefined;
     if (conversationId) {
-      if (isValidULID(conversationId)) {
-        payload.sessionId = conversationId;
-      } else {
-        const cacheKey = `lasso:sessionId:${conversationId}`;
-        let sessionId = await options?.getFromCacheByKey?.(cacheKey);
-        if (!sessionId) {
-          sessionId = generateULID();
-          await options?.putInCacheWithValue?.(cacheKey, sessionId);
-        }
-        payload.sessionId = sessionId;
-      }
+      payload.sessionId = conversationId;
     }
 
     // Map userId to request body
