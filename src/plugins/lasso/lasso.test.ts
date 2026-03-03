@@ -418,6 +418,135 @@ describe('Lasso Security Deputies API v3', () => {
     expect(payload.messages).toEqual([{ role: 'assistant', content: '' }]);
   });
 
+  it('should skip tool_call choices and only send text content for afterRequestHook', async () => {
+    mockedPost.mockResolvedValue({
+      violations_detected: false,
+      deputies: {},
+      findings: {},
+    });
+
+    const context = {
+      response: {
+        json: {
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                tool_calls: [
+                  { type: 'function', function: { name: 'get_weather' } },
+                ],
+              },
+            },
+            {
+              message: {
+                role: 'assistant',
+                content: 'The weather is sunny.',
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    await classifyHandler(
+      context,
+      getParameters(),
+      'afterRequestHook',
+      mockPluginHandlerOptions
+    );
+
+    const payload = mockedPost.mock.calls[0][1];
+    expect(payload.messages).toEqual([
+      { role: 'assistant', content: 'The weather is sunny.' },
+    ]);
+  });
+
+  it('should normalize array content in response for afterRequestHook', async () => {
+    mockedPost.mockResolvedValue({
+      violations_detected: false,
+      deputies: {},
+      findings: {},
+    });
+
+    const context = {
+      response: {
+        json: {
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: [
+                  { type: 'text', text: 'Hello ' },
+                  { type: 'text', text: 'world' },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    await classifyHandler(
+      context,
+      getParameters(),
+      'afterRequestHook',
+      mockPluginHandlerOptions
+    );
+
+    const payload = mockedPost.mock.calls[0][1];
+    expect(payload.messages).toEqual([
+      { role: 'assistant', content: 'Hello world' },
+    ]);
+  });
+
+  it('should map unsupported roles (tool, function) to user', async () => {
+    mockedPost.mockResolvedValue({
+      violations_detected: false,
+      deputies: {},
+      findings: {},
+    });
+
+    const context = {
+      request: {
+        json: {
+          messages: [
+            { role: 'system', content: 'You are a helpful assistant.' },
+            { role: 'user', content: 'What is the weather?' },
+            {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                { type: 'function', function: { name: 'get_weather' } },
+              ],
+            },
+            {
+              role: 'tool',
+              content: '{"temp": 72}',
+              tool_call_id: 'call_123',
+            },
+            { role: 'assistant', content: 'The temperature is 72°F.' },
+          ],
+        },
+      },
+    };
+
+    await classifyHandler(
+      context,
+      getParameters(),
+      'beforeRequestHook',
+      mockPluginHandlerOptions
+    );
+
+    const payload = mockedPost.mock.calls[0][1];
+    expect(payload.messages).toEqual([
+      { role: 'system', content: 'You are a helpful assistant.' },
+      { role: 'user', content: 'What is the weather?' },
+      { role: 'assistant', content: '' },
+      { role: 'user', content: '{"temp": 72}' },
+      { role: 'assistant', content: 'The temperature is 72°F.' },
+    ]);
+  });
+
   it('should map conversationId to sessionId in payload', async () => {
     mockedPost.mockResolvedValue({
       violations_detected: false,

@@ -1,4 +1,4 @@
-import { Message } from '../../types/requestBody';
+import { Message, OpenAIMessageRole } from '../../types/requestBody';
 import {
   HookEventType,
   PluginContext,
@@ -10,8 +10,29 @@ import { post } from '../utils';
 
 export const LASSO_BASE_URL = 'https://server.lasso.security';
 
+enum LassoMessageRole {
+  USER = 'user',
+  ASSISTANT = 'assistant',
+  SYSTEM = 'system',
+  MODEL = 'model',
+  DEVELOPER = 'developer',
+}
+
+const ROLE_MAP: Record<OpenAIMessageRole, LassoMessageRole> = {
+  user: LassoMessageRole.USER,
+  assistant: LassoMessageRole.ASSISTANT,
+  system: LassoMessageRole.SYSTEM,
+  developer: LassoMessageRole.DEVELOPER,
+  function: LassoMessageRole.USER,
+  tool: LassoMessageRole.USER,
+};
+
+function toLassoRole(role: OpenAIMessageRole): LassoMessageRole {
+  return ROLE_MAP[role] ?? LassoMessageRole.USER;
+}
+
 interface LassoMessage {
-  role: string;
+  role: LassoMessageRole;
   content: string;
 }
 
@@ -45,6 +66,25 @@ function hasBlockAction(findings: Record<string, LassoFinding[]>): boolean {
   return Object.values(findings).some((deputyFindings) =>
     deputyFindings.some((finding) => finding.action === 'BLOCK')
   );
+}
+
+/**
+ * Normalize a message's content to a plain string.
+ * Handles OpenAI's array content format (e.g., [{type: "text", text: "..."}])
+ * by extracting only text parts and concatenating them.
+ */
+function normalizeContent(content: any): string {
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (Array.isArray(content)) {
+    return content.reduce(
+      (value: string, item: any) =>
+        value + (item.type === 'text' ? item.text || '' : ''),
+      ''
+    );
+  }
+  return '';
 }
 
 export const classify = async (
@@ -86,25 +126,22 @@ export const handler: PluginHandler = async (
     let messages: LassoMessage[];
 
     if (eventType === 'afterRequestHook') {
-      // Extract assistant response from LLM output
-      const responseJson = context.response?.json;
-      const assistantContent =
-        responseJson?.choices?.[0]?.message?.content || '';
-      messages = [{ role: 'assistant', content: assistantContent }];
+      // Extract text-only content from LLM response choices,
+      // skipping tool_calls and function_call (no text content)
+      const choices = context.response?.json?.choices || [];
+      messages = choices
+        .filter((choice: any) => choice.message?.content != null)
+        .map((choice: any) => ({
+          role: toLassoRole(choice.message.role),
+          content: normalizeContent(choice.message.content),
+        }));
     } else {
-      // Extract messages from the request
+      // Extract messages from the request, normalizing content and mapping roles
       messages = (context.request?.json?.messages || []).map(
-        (message: Message) => {
-          if (typeof message.content === 'string') {
-            return message;
-          }
-          const textContent = message.content?.reduce(
-            (value: string, item: any) =>
-              value + (item.type === 'text' ? item.text || '' : ''),
-            ''
-          );
-          return { ...message, content: textContent };
-        }
+        (message: Message) => ({
+          role: toLassoRole(message.role),
+          content: normalizeContent(message.content),
+        })
       );
     }
 
