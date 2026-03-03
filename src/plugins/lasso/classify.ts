@@ -1,4 +1,10 @@
-import { PluginContext, PluginHandler, PluginParameters } from '../types';
+import { Message } from '../../types/requestBody';
+import {
+  HookEventType,
+  PluginContext,
+  PluginHandler,
+  PluginParameters,
+} from '../types';
 import { post } from '../utils';
 
 export const LASSO_BASE_URL = 'https://server.lasso.security';
@@ -8,21 +14,80 @@ interface LassoMessage {
   content: string;
 }
 
-interface LassoClassifyRequest {
-  messages: LassoMessage[];
+interface LassoFinding {
+  name: string;
+  category: string;
+  action: 'BLOCK' | 'AUTO_MASKING' | 'WARN';
+  severity: string;
+  score?: number;
 }
 
-interface LassoClassifyResponse {
+enum LassoMessageType {
+  PROMPT = 'PROMPT',
+  COMPLETION = 'COMPLETION',
+}
+
+interface LassoV3ClassifyRequest {
+  messages: LassoMessage[];
+  messageType: LassoMessageType;
+  sessionId?: string;
+  userId?: string;
+}
+
+interface LassoV3ClassifyResponse {
   deputies: Record<string, boolean>;
-  deputies_predictions: Record<string, number>;
   violations_detected: boolean;
+  findings: Record<string, LassoFinding[]>;
+}
+
+function hasBlockAction(findings: Record<string, LassoFinding[]>): boolean {
+  return Object.values(findings).some((deputyFindings) =>
+    deputyFindings.some((finding) => finding.action === 'BLOCK')
+  );
+}
+
+const CROCKFORD_BASE32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const ULID_REGEX = /^[0-9A-HJKMNP-TV-Z]{26}$/i;
+
+export function isValidULID(value: string): boolean {
+  return ULID_REGEX.test(value);
+}
+
+export function generateULID(): string {
+  const now = Date.now();
+
+  // Encode timestamp (48 bits → 10 base32 chars)
+  let timestamp = '';
+  let t = now;
+  for (let i = 0; i < 10; i++) {
+    timestamp = CROCKFORD_BASE32[t % 32] + timestamp;
+    t = Math.floor(t / 32);
+  }
+
+  // Encode random (80 bits → 16 base32 chars)
+  const randomBytes = new Uint8Array(10);
+  crypto.getRandomValues(randomBytes);
+
+  let random = '';
+  let bits = 0;
+  let numBits = 0;
+  let byteIdx = 0;
+  for (let i = 0; i < 16; i++) {
+    while (numBits < 5) {
+      bits = (bits << 8) | randomBytes[byteIdx++];
+      numBits += 8;
+    }
+    numBits -= 5;
+    random += CROCKFORD_BASE32[(bits >> numBits) & 31];
+    bits &= (1 << numBits) - 1;
+  }
+
+  return timestamp + random;
 }
 
 export const classify = async (
   credentials: Record<string, any>,
-  data: LassoClassifyRequest,
-  conversationId?: string,
-  userId?: string,
+  data: LassoV3ClassifyRequest,
   timeout?: number
 ) => {
   const options: {
@@ -33,68 +98,94 @@ export const classify = async (
     },
   };
 
-  // Add optional headers if provided
-  if (conversationId) {
-    options.headers['lasso-conversation-id'] = conversationId;
-  }
+  const baseURL = credentials.apiEndpoint || LASSO_BASE_URL;
+  const url = `${baseURL}/gateway/v3/classify`;
 
-  if (userId) {
-    options.headers['lasso-user-id'] = userId;
-  }
-
-  let baseURL = LASSO_BASE_URL;
-  let url = `${baseURL}/gateway/v2/classify`;
-
-  return post<LassoClassifyResponse>(url, data, options, timeout);
+  return post<LassoV3ClassifyResponse>(url, data, options, timeout);
 };
 
 export const handler: PluginHandler = async (
   context: PluginContext,
-  parameters: PluginParameters
+  parameters: PluginParameters,
+  eventType: HookEventType,
+  options
 ) => {
   let error = null;
   let verdict = true; // Default to allowing the request
   let data = null;
 
   try {
-    // Extract messages from the context
-    let messages = context.request?.json?.messages || [];
+    // Derive messageType from eventType
+    const messageType =
+      eventType === 'beforeRequestHook'
+        ? LassoMessageType.PROMPT
+        : LassoMessageType.COMPLETION;
 
-    // Process messages to ensure content is a string
-    messages = messages.map((message: any) => {
-      if (typeof message.content === 'string') {
-        return message;
-      } else {
-        // Handle content that might be an array of objects (e.g., OpenAI format)
-        const textContent = message.content?.reduce(
-          (value: string, item: any) =>
-            value + (item.type === 'text' ? item.text || '' : ''),
-          ''
-        );
-        return { ...message, content: textContent };
-      }
-    });
+    let messages: LassoMessage[];
 
-    // Prepare the request payload
-    const payload: LassoClassifyRequest = {
-      messages: messages,
+    if (eventType === 'afterRequestHook') {
+      // Extract assistant response from LLM output
+      const responseJson = context.response?.json;
+      const assistantContent =
+        responseJson?.choices?.[0]?.message?.content || '';
+      messages = [{ role: 'assistant', content: assistantContent }];
+    } else {
+      // Extract messages from the request
+      messages = (context.request?.json?.messages || []).map(
+        (message: Message) => {
+          if (typeof message.content === 'string') {
+            return message;
+          }
+          const textContent = message.content?.reduce(
+            (value: string, item: any) =>
+              value + (item.type === 'text' ? item.text || '' : ''),
+            ''
+          );
+          return { ...message, content: textContent };
+        }
+      );
+    }
+
+    // Prepare the v3 request payload
+    const payload: LassoV3ClassifyRequest = {
+      messages,
+      messageType,
     };
 
-    // Extract optional parameters
+    // Map conversationId to sessionId (must be a valid ULID for v3 API)
     const conversationId = parameters.conversationId as string | undefined;
-    const userId = parameters.userId as string | undefined;
+    if (conversationId) {
+      if (isValidULID(conversationId)) {
+        payload.sessionId = conversationId;
+      } else {
+        const cacheKey = `lasso:sessionId:${conversationId}`;
+        let sessionId = await options?.getFromCacheByKey?.(cacheKey);
+        if (!sessionId) {
+          sessionId = generateULID();
+          await options?.putInCacheWithValue?.(cacheKey, sessionId);
+        }
+        payload.sessionId = sessionId;
+      }
+    }
 
-    // Call the Lasso Security Deputies API
+    // Map userId to request body
+    const userId = parameters.userId as string | undefined;
+    if (userId) {
+      payload.userId = userId;
+    }
+
+    // Call the Lasso Security Deputies API v3
     const result = await classify(
       parameters.credentials || {},
       payload,
-      conversationId,
-      userId,
       parameters.timeout
     );
 
-    // If any violations were detected, block the request
-    verdict = !result.violations_detected;
+    // Block only when violations are detected AND at least one finding has BLOCK action
+    // WARN and AUTO_MASKING violations pass through with data
+    if (result.violations_detected && hasBlockAction(result.findings)) {
+      verdict = false;
+    }
 
     data = result;
   } catch (e: any) {

@@ -1,4 +1,4 @@
-import { handler as classifyHandler } from './classify';
+import { handler as classifyHandler, isValidULID } from './classify';
 
 // Mock the post utility to avoid real HTTP calls
 jest.mock('../utils', () => ({
@@ -26,6 +26,28 @@ function getContext(messages?: any[]) {
           {
             role: 'user',
             content: 'This is a test message for classification',
+          },
+        ],
+      },
+    },
+  };
+}
+
+function getResponseContext(assistantContent: string, requestMessages?: any[]) {
+  return {
+    request: {
+      json: {
+        messages: requestMessages || [{ role: 'user', content: 'Hello' }],
+      },
+    },
+    response: {
+      json: {
+        choices: [
+          {
+            message: {
+              role: 'assistant',
+              content: assistantContent,
+            },
           },
         ],
       },
@@ -288,7 +310,11 @@ describe('Lasso Security Deputies API v3', () => {
       findings: {},
     });
 
-    await classifyHandler(getContext(), getParameters(), 'afterRequestHook');
+    await classifyHandler(
+      getResponseContext('The capital of France is Paris.'),
+      getParameters(),
+      'afterRequestHook'
+    );
 
     expect(mockedPost).toHaveBeenCalledWith(
       expect.any(String),
@@ -296,6 +322,95 @@ describe('Lasso Security Deputies API v3', () => {
       expect.any(Object),
       undefined
     );
+  });
+
+  it('should send assistant response content (not request messages) for afterRequestHook', async () => {
+    mockedPost.mockResolvedValue({
+      violations_detected: false,
+      deputies: {},
+      findings: {},
+    });
+
+    await classifyHandler(
+      getResponseContext('The capital of France is Paris.', [
+        { role: 'user', content: 'What is the capital of France?' },
+      ]),
+      getParameters(),
+      'afterRequestHook'
+    );
+
+    const payload = mockedPost.mock.calls[0][1];
+    expect(payload.messages).toEqual([
+      { role: 'assistant', content: 'The capital of France is Paris.' },
+    ]);
+    expect(payload.messages).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ role: 'user' })])
+    );
+  });
+
+  it('should send request messages (not response) for beforeRequestHook', async () => {
+    mockedPost.mockResolvedValue({
+      violations_detected: false,
+      deputies: {},
+      findings: {},
+    });
+
+    await classifyHandler(
+      getResponseContext('Some response', [
+        { role: 'user', content: 'User question here' },
+      ]),
+      getParameters(),
+      'beforeRequestHook'
+    );
+
+    const payload = mockedPost.mock.calls[0][1];
+    expect(payload.messages).toEqual([
+      { role: 'user', content: 'User question here' },
+    ]);
+  });
+
+  it('should handle afterRequestHook with BLOCK violation on response', async () => {
+    mockedPost.mockResolvedValue({
+      violations_detected: true,
+      deputies: { 'custom-policies': true },
+      findings: {
+        'custom-policies': [
+          {
+            name: 'Sensitive Data Leak',
+            category: 'DATA_LOSS',
+            action: 'BLOCK',
+            severity: 'HIGH',
+            score: 0.95,
+          },
+        ],
+      },
+    });
+
+    const result = await classifyHandler(
+      getResponseContext('Here is the secret API key: sk-1234'),
+      getParameters(),
+      'afterRequestHook'
+    );
+
+    expect(result.verdict).toBe(false);
+    expect(result.data.violations_detected).toBe(true);
+  });
+
+  it('should handle empty assistant content in afterRequestHook', async () => {
+    mockedPost.mockResolvedValue({
+      violations_detected: false,
+      deputies: {},
+      findings: {},
+    });
+
+    await classifyHandler(
+      getResponseContext(''),
+      getParameters(),
+      'afterRequestHook'
+    );
+
+    const payload = mockedPost.mock.calls[0][1];
+    expect(payload.messages).toEqual([{ role: 'assistant', content: '' }]);
   });
 
   it('should map conversationId to sessionId in payload', async () => {
@@ -358,10 +473,155 @@ describe('Lasso Security Deputies API v3', () => {
   });
 });
 
+describe('Lasso Security Deputies API v3 - ULID session ID validation', () => {
+  beforeEach(() => {
+    mockedPost.mockReset();
+    mockedPost.mockResolvedValue({
+      violations_detected: false,
+      deputies: {},
+      findings: {},
+    });
+  });
+
+  it('should pass through a valid ULID conversationId unchanged', async () => {
+    const ulid = '01HG4X8YWEP1TQRZV2MN5BC7DF';
+
+    await classifyHandler(
+      getContext(),
+      getParameters({ conversationId: ulid }),
+      'beforeRequestHook'
+    );
+
+    expect(mockedPost).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ sessionId: ulid }),
+      expect.any(Object),
+      undefined
+    );
+  });
+
+  it('should generate a valid ULID when conversationId is a UUID', async () => {
+    const uuid = '550e8400-e29b-41d4-a716-446655440000';
+
+    await classifyHandler(
+      getContext(),
+      getParameters({ conversationId: uuid }),
+      'beforeRequestHook',
+      { env: {} }
+    );
+
+    const payload = mockedPost.mock.calls[0][1];
+    expect(payload.sessionId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/i);
+    expect(payload.sessionId).not.toBe(uuid);
+  });
+
+  it('should use cached ULID for non-ULID conversationId (cache hit)', async () => {
+    const cachedUlid = '01HF3Z7YVDN0SGKPVJ9BQ6RPXE';
+    const uuid = '550e8400-e29b-41d4-a716-446655440000';
+
+    const mockGetFromCache = jest.fn().mockResolvedValue(cachedUlid);
+    const mockPutInCache = jest.fn().mockResolvedValue(undefined);
+
+    await classifyHandler(
+      getContext(),
+      getParameters({ conversationId: uuid }),
+      'beforeRequestHook',
+      {
+        env: {},
+        getFromCacheByKey: mockGetFromCache,
+        putInCacheWithValue: mockPutInCache,
+      }
+    );
+
+    expect(mockGetFromCache).toHaveBeenCalledWith(`lasso:sessionId:${uuid}`);
+    expect(mockPutInCache).not.toHaveBeenCalled();
+    expect(mockedPost).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ sessionId: cachedUlid }),
+      expect.any(Object),
+      undefined
+    );
+  });
+
+  it('should generate and cache ULID for non-ULID conversationId (cache miss)', async () => {
+    const uuid = '550e8400-e29b-41d4-a716-446655440000';
+
+    const mockGetFromCache = jest.fn().mockResolvedValue(null);
+    const mockPutInCache = jest.fn().mockResolvedValue(undefined);
+
+    await classifyHandler(
+      getContext(),
+      getParameters({ conversationId: uuid }),
+      'beforeRequestHook',
+      {
+        env: {},
+        getFromCacheByKey: mockGetFromCache,
+        putInCacheWithValue: mockPutInCache,
+      }
+    );
+
+    expect(mockGetFromCache).toHaveBeenCalledWith(`lasso:sessionId:${uuid}`);
+    expect(mockPutInCache).toHaveBeenCalledWith(
+      `lasso:sessionId:${uuid}`,
+      expect.stringMatching(/^[0-9A-HJKMNP-TV-Z]{26}$/i)
+    );
+
+    const payload = mockedPost.mock.calls[0][1];
+    expect(payload.sessionId).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/i);
+    expect(payload.sessionId).not.toBe(uuid);
+  });
+
+  it('should skip cache entirely when conversationId is a valid ULID', async () => {
+    const ulid = '01HG4X8YWEP1TQRZV2MN5BC7DF';
+
+    const mockGetFromCache = jest.fn();
+    const mockPutInCache = jest.fn();
+
+    await classifyHandler(
+      getContext(),
+      getParameters({ conversationId: ulid }),
+      'beforeRequestHook',
+      {
+        env: {},
+        getFromCacheByKey: mockGetFromCache,
+        putInCacheWithValue: mockPutInCache,
+      }
+    );
+
+    expect(mockGetFromCache).not.toHaveBeenCalled();
+    expect(mockPutInCache).not.toHaveBeenCalled();
+    expect(mockedPost).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ sessionId: ulid }),
+      expect.any(Object),
+      undefined
+    );
+  });
+
+  it('should validate ULID format correctly', () => {
+    // Valid ULIDs
+    expect(isValidULID('01HG4X8YWEP1TQRZV2MN5BC7DF')).toBe(true);
+    expect(isValidULID('01JA2B3C4D5E6F7G8H9J0KMNPQ')).toBe(true);
+
+    // Invalid: UUID format
+    expect(isValidULID('550e8400-e29b-41d4-a716-446655440000')).toBe(false);
+
+    // Invalid: wrong length
+    expect(isValidULID('01HG4X8YWEP1')).toBe(false);
+
+    // Invalid: contains I, L, O, U (not in Crockford base32)
+    expect(isValidULID('01HG4X8YWEP1TQRZV2ILLINOIS')).toBe(false);
+  });
+});
+
 describe('Lasso Security Deputies API v3 - Integration', () => {
   beforeAll(() => {
-    // Restore real post for integration tests
-    mockedPost.mockRestore();
+    const { post: realPost } = jest.requireActual('../utils');
+    mockedPost.mockImplementation(realPost);
+  });
+
+  afterAll(() => {
+    mockedPost.mockReset();
   });
 
   function getIntegrationParameters() {
@@ -373,7 +633,7 @@ describe('Lasso Security Deputies API v3 - Integration', () => {
     }
     return {
       credentials: creds,
-      conversationId: '01HF3Z7YVDN0SGKPVJ9BQ6RPXE',
+      conversationId: '01KJSZ6DMAJRAHCJ28J6S84T55',
       userId: 'integration@example.com',
     };
   }
