@@ -3,6 +3,7 @@ import {
   HookEventType,
   PluginContext,
   PluginHandler,
+  PluginHandlerOptions,
   PluginParameters,
 } from '../types';
 import { post } from '../utils';
@@ -68,7 +69,8 @@ export const classify = async (
 export const handler: PluginHandler = async (
   context: PluginContext,
   parameters: PluginParameters,
-  eventType: HookEventType
+  eventType: HookEventType,
+  options: PluginHandlerOptions
 ) => {
   let error = null;
   let verdict = true; // Default to allowing the request
