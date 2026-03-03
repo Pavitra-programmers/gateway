@@ -107,7 +107,9 @@ export const handler: PluginHandler = async (
   const timeout = (parameters.timeout as number) || DEFAULT_TIMEOUT;
 
   try {
-    const requestPayload = JSON.stringify({ body: typeof content === 'string' ? content : JSON.stringify(content) });
+    const requestPayload = JSON.stringify({
+      body: typeof content === 'string' ? content : JSON.stringify(content),
+    });
     const requestPath = context.request?.json?.path || '/v1/chat/completions';
 
     const requestBody: AktoScanRequest = {
