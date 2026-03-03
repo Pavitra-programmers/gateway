@@ -16,10 +16,6 @@
   "credentials": {
     "portkey": {
       "apiKey": "..."
-    },
-    "akto": {
-      "apiKey": "your-akto-api-key",
-      "baseUrl": "https://guardrails.akto.io"
     }
   },
   "cache": false
