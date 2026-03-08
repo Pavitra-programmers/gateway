@@ -145,6 +145,11 @@ export const handler: PluginHandler = async (
       );
     }
 
+    // Nothing to classify – skip the Lasso call
+    if (messages.length === 0) {
+      return { error: null, verdict: true, data: null };
+    }
+
     // Prepare the v3 request payload
     const payload: LassoV3ClassifyRequest = {
       messages,
