@@ -407,18 +407,19 @@ describe('Lasso Security Deputies API v3', () => {
       findings: {},
     });
 
-    await classifyHandler(
+    const result = await classifyHandler(
       createChatCompleteResponseContext(''),
       getParameters(),
       'afterRequestHook',
       mockPluginHandlerOptions
     );
 
-    const payload = mockedPost.mock.calls[0][1];
-    expect(payload.messages).toEqual([{ role: 'assistant', content: '' }]);
+    // Empty content → getText returns '' → messages = [] → early return, no post call
+    expect(mockedPost).not.toHaveBeenCalled();
+    expect(result.verdict).toBe(true);
   });
 
-  it('should skip tool_call choices and only send text content for afterRequestHook', async () => {
+  it('should skip classification when first choice is a tool_call without text content for afterRequestHook', async () => {
     mockedPost.mockResolvedValue({
       violations_detected: false,
       deputies: {},
@@ -426,6 +427,7 @@ describe('Lasso Security Deputies API v3', () => {
     });
 
     const context = {
+      requestType: 'chatComplete' as const,
       response: {
         json: {
           choices: [
@@ -437,57 +439,32 @@ describe('Lasso Security Deputies API v3', () => {
                 ],
               },
             },
-            {
-              message: {
-                role: 'assistant',
-                content: 'The weather is sunny.',
-              },
-            },
           ],
         },
       },
     };
 
-    await classifyHandler(
+    const result = await classifyHandler(
       context,
       getParameters(),
       'afterRequestHook',
       mockPluginHandlerOptions
     );
 
-    const payload = mockedPost.mock.calls[0][1];
-    expect(payload.messages).toEqual([
-      { role: 'assistant', content: 'The weather is sunny.' },
-    ]);
+    // getText reads choices[0] which has no content → empty → skip
+    expect(mockedPost).not.toHaveBeenCalled();
+    expect(result.verdict).toBe(true);
   });
 
-  it('should normalize array content in response for afterRequestHook', async () => {
+  it('should send string content in response for afterRequestHook', async () => {
     mockedPost.mockResolvedValue({
       violations_detected: false,
       deputies: {},
       findings: {},
     });
 
-    const context = {
-      response: {
-        json: {
-          choices: [
-            {
-              message: {
-                role: 'assistant',
-                content: [
-                  { type: 'text', text: 'Hello ' },
-                  { type: 'text', text: 'world' },
-                ],
-              },
-            },
-          ],
-        },
-      },
-    };
-
     await classifyHandler(
-      context,
+      createChatCompleteResponseContext('Hello world'),
       getParameters(),
       'afterRequestHook',
       mockPluginHandlerOptions
@@ -507,6 +484,7 @@ describe('Lasso Security Deputies API v3', () => {
     });
 
     const context = {
+      requestType: 'chatComplete' as const,
       request: {
         json: {
           messages: [
@@ -607,6 +585,170 @@ describe('Lasso Security Deputies API v3', () => {
       expect.any(Object),
       undefined
     );
+  });
+});
+
+describe('Lasso Security - request type extraction', () => {
+  beforeEach(() => {
+    mockedPost.mockReset();
+    mockedPost.mockResolvedValue({
+      violations_detected: false,
+      deputies: {},
+      findings: {},
+    });
+  });
+
+  // --- complete ---
+
+  it('should extract string prompt for complete requestType', async () => {
+    const context = {
+      requestType: 'complete' as const,
+      request: { json: { prompt: 'Tell me a story' } },
+    };
+
+    await classifyHandler(
+      context,
+      getParameters(),
+      'beforeRequestHook',
+      mockPluginHandlerOptions
+    );
+
+    const payload = mockedPost.mock.calls[0][1];
+    expect(payload.messages).toEqual([
+      { role: 'user', content: 'Tell me a story' },
+    ]);
+    expect(payload.messageType).toBe('PROMPT');
+  });
+
+  it('should join array prompt for complete requestType', async () => {
+    const context = {
+      requestType: 'complete' as const,
+      request: { json: { prompt: ['line one', 'line two'] } },
+    };
+
+    await classifyHandler(
+      context,
+      getParameters(),
+      'beforeRequestHook',
+      mockPluginHandlerOptions
+    );
+
+    const payload = mockedPost.mock.calls[0][1];
+    expect(payload.messages).toEqual([
+      { role: 'user', content: 'line one\nline two' },
+    ]);
+  });
+
+  it('should skip classification for empty complete prompt', async () => {
+    const context = {
+      requestType: 'complete' as const,
+      request: { json: { prompt: '' } },
+    };
+
+    const result = await classifyHandler(
+      context,
+      getParameters(),
+      'beforeRequestHook',
+      mockPluginHandlerOptions
+    );
+
+    expect(mockedPost).not.toHaveBeenCalled();
+    expect(result.verdict).toBe(true);
+  });
+
+  // --- embed ---
+
+  it('should extract string input for embed requestType', async () => {
+    const context = {
+      requestType: 'embed' as const,
+      request: { json: { input: 'embed this text' } },
+    };
+
+    await classifyHandler(
+      context,
+      getParameters(),
+      'beforeRequestHook',
+      mockPluginHandlerOptions
+    );
+
+    const payload = mockedPost.mock.calls[0][1];
+    expect(payload.messages).toEqual([
+      { role: 'user', content: 'embed this text' },
+    ]);
+  });
+
+  it('should join array input for embed requestType', async () => {
+    const context = {
+      requestType: 'embed' as const,
+      request: { json: { input: ['text one', 'text two'] } },
+    };
+
+    await classifyHandler(
+      context,
+      getParameters(),
+      'beforeRequestHook',
+      mockPluginHandlerOptions
+    );
+
+    const payload = mockedPost.mock.calls[0][1];
+    expect(payload.messages).toEqual([
+      { role: 'user', content: 'text one\ntext two' },
+    ]);
+  });
+
+  it('should skip classification for empty embed input', async () => {
+    const context = {
+      requestType: 'embed' as const,
+      request: { json: { input: '' } },
+    };
+
+    const result = await classifyHandler(
+      context,
+      getParameters(),
+      'beforeRequestHook',
+      mockPluginHandlerOptions
+    );
+
+    expect(mockedPost).not.toHaveBeenCalled();
+    expect(result.verdict).toBe(true);
+  });
+
+  // --- createModelResponse ---
+
+  // --- edge cases ---
+
+  it('should skip classification for unknown requestType', async () => {
+    const context = {
+      requestType: 'unknownType',
+      request: { json: { messages: [{ role: 'user', content: 'hello' }] } },
+    };
+
+    const result = await classifyHandler(
+      context,
+      getParameters(),
+      'beforeRequestHook',
+      mockPluginHandlerOptions
+    );
+
+    expect(mockedPost).not.toHaveBeenCalled();
+    expect(result.verdict).toBe(true);
+  });
+
+  it('should skip classification when request json is missing', async () => {
+    const context = {
+      requestType: 'chatComplete' as const,
+      request: {},
+    };
+
+    const result = await classifyHandler(
+      context,
+      getParameters(),
+      'beforeRequestHook',
+      mockPluginHandlerOptions
+    );
+
+    expect(mockedPost).not.toHaveBeenCalled();
+    expect(result.verdict).toBe(true);
   });
 });
 

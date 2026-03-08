@@ -6,7 +6,7 @@ import {
   PluginHandlerOptions,
   PluginParameters,
 } from '../types';
-import { post } from '../utils';
+import { getText, post } from '../utils';
 
 export const LASSO_BASE_URL = 'https://server.lasso.security';
 
@@ -14,7 +14,6 @@ enum LassoMessageRole {
   USER = 'user',
   ASSISTANT = 'assistant',
   SYSTEM = 'system',
-  MODEL = 'model',
   DEVELOPER = 'developer',
 }
 
@@ -87,6 +86,45 @@ function normalizeContent(content: any): string {
   return '';
 }
 
+/**
+ * Extract messages from the request body based on the requestType.
+ * Handles chatComplete/messages, complete, embed, and createModelResponse.
+ */
+function extractRequestMessages(context: PluginContext): LassoMessage[] {
+  const requestType = context.requestType;
+  const json = context.request?.json;
+
+  if (!json) return [];
+
+  switch (requestType) {
+    case 'chatComplete':
+    case 'messages':
+      return (json.messages || []).map((message: Message) => ({
+        role: toLassoRole(message.role),
+        content: normalizeContent(message.content),
+      }));
+
+    case 'complete': {
+      const prompt = json.prompt;
+      if (!prompt || (Array.isArray(prompt) && prompt.length === 0)) return [];
+      const text = Array.isArray(prompt) ? prompt.join('\n') : String(prompt);
+      if (!text) return [];
+      return [{ role: LassoMessageRole.USER, content: text }];
+    }
+
+    case 'embed': {
+      const input = json.input;
+      if (!input || (Array.isArray(input) && input.length === 0)) return [];
+      const text = Array.isArray(input) ? input.join('\n') : String(input);
+      if (!text) return [];
+      return [{ role: LassoMessageRole.USER, content: text }];
+    }
+
+    default:
+      return [];
+  }
+}
+
 export const classify = async (
   credentials: Record<string, any>,
   data: LassoV3ClassifyRequest,
@@ -126,23 +164,12 @@ export const handler: PluginHandler = async (
     let messages: LassoMessage[];
 
     if (eventType === 'afterRequestHook') {
-      // Extract text-only content from LLM response choices,
-      // skipping tool_calls and function_call (no text content)
-      const choices = context.response?.json?.choices || [];
-      messages = choices
-        .filter((choice: any) => choice.message?.content != null)
-        .map((choice: any) => ({
-          role: toLassoRole(choice.message.role),
-          content: normalizeContent(choice.message.content),
-        }));
+      const text = getText(context, eventType).trim();
+      messages = text
+        ? [{ role: LassoMessageRole.ASSISTANT, content: text }]
+        : [];
     } else {
-      // Extract messages from the request, normalizing content and mapping roles
-      messages = (context.request?.json?.messages || []).map(
-        (message: Message) => ({
-          role: toLassoRole(message.role),
-          content: normalizeContent(message.content),
-        })
-      );
+      messages = extractRequestMessages(context);
     }
 
     // Nothing to classify – skip the Lasso call
