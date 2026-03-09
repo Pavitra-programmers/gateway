@@ -108,9 +108,8 @@ export const handler: PluginHandler<ZscalerCredentials> = async (
     verdict = !isBlocked;
 
     if (!verdict) {
-      error = new Error(
-        'Zscaler AI Guard blocked the content with action: BLOCK'
-      );
+      data.blockReason =
+        'Zscaler AI Guard blocked the content with action: BLOCK';
     }
   } catch (e: unknown) {
     verdict = false;
