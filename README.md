@@ -3,6 +3,11 @@
    <strong>English</strong> | <a href="./.github/README.cn.md">中文</a> | <a href="./.github/README.jp.md">日本語</a>
 </p>
 
+> [!IMPORTANT]
+> :rocket: Gateway 2.0 (Pre-Release) Portkey's core enterprise gateway is merging into open-source with our 2.0 release. You can try the pre-release branch [here](https://github.com/portkey-ai/gateway/tree/2.0.0).
+> Read more about what's next for Portkey in our [**Series A announcement**](https://portkey.wiki/rohit-a).
+
+
 <div align="center">
 
 🆕 **[Portkey Models](https://github.com/Portkey-AI/models)** - Open-source LLM pricing for 2,300+ models across 40+ providers. [Explore →](https://portkey.ai/models)
@@ -41,7 +46,8 @@ The [**AI Gateway**](https://portkey.wiki/gh-10) is designed for fast, reliable 
 - Scale AI apps with **[load balancing](https://portkey.wiki/gh-13)** and **[conditional routing](https://portkey.wiki/gh-14)**
 - Protect your AI deployments with **[guardrails](https://portkey.wiki/gh-15)**
 - Go beyond text with **[multi-modal capabilities](https://portkey.wiki/gh-16)**
-- Finally, explore **[agentic workflow](https://portkey.wiki/gh-17)** integrations
+- Explore **[agentic workflow](https://portkey.wiki/gh-17)** integrations
+- Manage MCP servers with enterprise auth & observability using **[MCP Gateway](https://portkey.ai/docs/product/mcp-gateway)**
 
 <br><br>
 
@@ -184,9 +190,20 @@ The enterprise deployment architecture for supported platforms is available here
 
 <a href="https://portkey.sh/demo-13"><img src="https://portkey.ai/blog/content/images/2024/08/Get-API-Key--5-.png" height=50 alt="Book an enterprise AI gateway demo" /></a><br/>
 
-
 <br>
 
+## MCP Gateway
+
+[MCP Gateway](https://portkey.ai/docs/product/mcp-gateway) provides a centralized control plane for managing MCP (Model Context Protocol) servers across your organization.
+
+- **Authentication** — Single auth layer at the gateway. Users authenticate once; your MCP servers receive verified requests
+- **Access Control** — Control which teams and users can access which servers and tools. Revoke access instantly
+- **Observability** — Every tool call logged with full context: who called what, parameters, response, latency
+- **Identity Forwarding** — Forward user identity (email, team, roles) to MCP servers automatically
+
+Works with Claude Desktop, Cursor, VS Code, and any MCP-compatible client. [Get started →](https://portkey.ai/docs/product/mcp-gateway/quickstart)
+
+<br>
 
 ## Core Features
 ### Reliable Routing
