@@ -1,0 +1,72 @@
+{
+  "id": "lasso",
+  "description": "Lasso Security is the leading genAI security platform that autonomously monitors interactions, detects risks in real-time, and empowers organizations to adopt AI safely.",
+  "credentials": {
+    "type": "object",
+    "properties": {
+      "apiKey": {
+        "type": "string",
+        "label": "API Key",
+        "description": "Find your API key in the Lasso dashboard (https://app.lasso.security/organization-settings)",
+        "encrypted": true
+      },
+      "apiEndpoint": {
+        "type": "string",
+        "label": "API Endpoint",
+        "description": "Custom API endpoint URL (optional, defaults to https://server.lasso.security)"
+      }
+    },
+    "required": ["apiKey"]
+  },
+  "functions": [
+    {
+      "name": "Classifier",
+      "id": "classify",
+      "supportedHooks": ["beforeRequestHook", "afterRequestHook"],
+      "type": "guardrail",
+      "description": [
+        {
+          "type": "subHeading",
+          "text": "Classify the text to detect sensitive information and risks using Lasso Security's Deputies v3 API."
+        },
+        {
+          "type": "subHeading",
+          "text": "Lasso Security's Deputies analyze content for various security risks including jailbreak attempts, custom policy violations, sexual content, hate speech, illegal content, and more. Returns detailed findings with action types (BLOCK, WARN, AUTO_MASKING) and severity levels."
+        }
+      ],
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "messages": {
+            "type": "array",
+            "description": "Array of message objects containing role and content",
+            "items": {
+              "type": "object",
+              "properties": {
+                "role": {
+                  "type": "string",
+                  "description": "The role of the message sender",
+                  "enum": ["system", "user", "assistant"]
+                },
+                "content": {
+                  "type": "string",
+                  "description": "The content of the message"
+                }
+              },
+              "required": ["role", "content"]
+            }
+          },
+          "conversationId": {
+            "type": "string",
+            "description": "Valid ULID to group related API calls into a single dialogue (optional, sent as sessionId to the v3 API)"
+          },
+          "userId": {
+            "type": "string",
+            "description": "User identifier for tracking individual usage - UUID, ULID, email or number string (optional)"
+          }
+        },
+        "required": ["messages"]
+      }
+    }
+  ]
+}
