@@ -1,5 +1,4 @@
-import crypto from 'crypto';
-import { nodeLineReader } from '../../handlers/streamHandlerUtils';
+import { getBoundaryFromContentType } from '../../handlers/streamHandlerUtils';
 import {
   BedrockUploadFileTransformerConfig,
   transformFinetuneDatasetLine,
@@ -9,32 +8,12 @@ import { transformUsingProviderConfig } from '../../services/transformToProvider
 import { Context } from 'hono';
 import { BEDROCK, POWERED_BY } from '../../globals';
 import {
-  awsEndpointDomain,
-  getAssumedRoleCredentials,
   getFoundationModelFromInferenceProfile,
+  providerAssumedRoleCredentials,
 } from './utils';
 import BedrockAPIConfig from './api';
-import { RequestHandler } from '../../providers/types';
+import { ProviderConfig, RequestHandler } from '../../providers/types';
 import { Options } from '../../types/requestBody';
-import { PassThrough, Readable, Transform } from 'stream';
-import { pipeline } from 'stream/promises';
-import { retriableApiReq } from '../../services/winky/utils/helpers';
-import { externalServiceFetch } from '../../utils/fetch';
-import { env } from 'hono/adapter';
-
-const MIN_CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
-
-// https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Type#media-type
-const isBoundary = (chunk: string) => {
-  return chunk.startsWith('--');
-};
-
-const isHeader = (chunk: string) => {
-  return (
-    chunk.startsWith('Content-Disposition: form-data') ||
-    chunk.includes('Content-Type:')
-  );
-};
 
 class AwsMultipartUploadHandler {
   private bucket: string;
@@ -58,7 +37,7 @@ class AwsMultipartUploadHandler {
     this.bucket = bucket;
     this.objectKey = objectKey;
     this.url = new URL(
-      `https://${bucket}.s3.${region}.${awsEndpointDomain}/${objectKey}?uploads`
+      `https://${bucket}.s3.${region}.amazonaws.com/${objectKey}?uploads`
     );
     this.providerOptions = providerOptions;
     this.c = c;
@@ -75,10 +54,7 @@ class AwsMultipartUploadHandler {
     });
 
     // Step 5: Send Request
-    const response = await externalServiceFetch(this.url.toString(), {
-      method,
-      headers,
-    });
+    const response = await fetch(this.url.toString(), { method, headers });
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(
@@ -99,162 +75,102 @@ class AwsMultipartUploadHandler {
     return uploadIdMatch[1];
   }
 
-  async pushCurrentPart(
-    passThrough: PassThrough,
-    partNumber: number,
-    lastPart?: boolean
-  ) {
-    let chunk = passThrough.read();
-    while (passThrough.readableLength > 0) {
-      chunk = passThrough?.read();
-    }
-
-    const partLength = chunk.length;
-
-    await this.uploadPart(partNumber, chunk);
-
-    if (lastPart) {
-      await this.completeMultipartUpload();
-    }
-
-    return partLength;
-  }
-
   async chunkAndUploadStream(
     awsBedrockModel: string,
-    requestBody: Readable,
+    requestBody: ReadableStream,
     requestHeaders: Record<string, string>,
+    purpose: string,
     modelType: string
   ) {
     const providerConfig = getProviderConfig(awsBedrockModel);
 
+    const reader = requestBody.getReader();
     let partNumber = 1;
-    let isPurposeHeader = false;
-    const result: { purpose: string; error: Error | null } = {
-      purpose: '',
-      error: null,
-    };
-    let line = 0;
+    const decoder = new TextDecoder();
+    const boundary =
+      '--' + getBoundaryFromContentType(requestHeaders['content-type']);
+    let currentChunk = '';
+    let isParsingHeaders = true;
+    let currentHeaders = '';
+    let isFileContent = false;
 
-    const lineReader = nodeLineReader();
+    while (true) {
+      const { done, value } = await reader.read();
 
-    const passThrough = new PassThrough();
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
-    const classThis = this;
+      currentChunk += decoder.decode(value, { stream: true });
 
-    const transform = new Transform({
-      transform: async function (chunk, encoding, callback) {
-        let buffer;
-        try {
-          const _chunk = chunk.toString();
+      // 1MB chunk size
+      if (currentChunk.length < 1000000 && !done) continue;
 
-          const match = _chunk.match(/name="([^"]+)"/);
-          const headerKey = match ? match[1] : null;
-
-          if (headerKey && headerKey === 'purpose') {
-            isPurposeHeader = true;
-            callback();
-            return;
-          }
-
-          if (isPurposeHeader && _chunk?.length > 0 && !result.purpose) {
-            isPurposeHeader = false;
-            result.purpose = _chunk.trim();
-            callback();
-            return;
-          }
-
-          if (isBoundary(_chunk) || isHeader(_chunk)) {
-            callback();
-            return;
-          }
-
-          if (!_chunk) {
-            callback();
-            return;
-          }
-
-          // chunk should always be a json compatible string.
-          const json = JSON.parse(chunk.toString());
-          if (json && !result.purpose) {
-            // Close the stream.
-            this.end();
-            callback(new Error('Invalid value for purpose'));
-            return;
-          }
-          line++;
-          // Upload the chunk if it's big enough.
-          // upload part is needed here, since the upload is an async operation and `pipeline` is async.
-          if (
-            (passThrough.writableLength || passThrough.readableLength) >=
-            MIN_CHUNK_SIZE
-          ) {
-            const partLength = await classThis.pushCurrentPart(
-              passThrough,
-              partNumber
-            );
-            partNumber++;
-            classThis.contentLength += partLength;
-          }
-          // end of upload part
-
-          if (result.purpose === 'fine-tune') {
-            const transformedLine =
-              modelType === 'text'
-                ? tryChatToTextTransformation(json)
-                : transformFinetuneDatasetLine(json);
-            if (!transformedLine) {
-              // Skip this line if it is not a valid json line
-              return;
-            }
-            buffer = JSON.stringify(transformedLine) + '\n';
-          } else {
-            const modelInput = transformUsingProviderConfig(
-              providerConfig,
-              json.body
-            );
-            const transformedLine = {
-              recordId: json.custom_id,
-              modelInput: modelInput,
-            };
-            buffer = JSON.stringify(transformedLine) + '\n';
-          }
-        } catch (error) {
-          result.error = new Error(
-            `Found invalid JSON at line ${line}: ${error}`
+      while (currentChunk.length > 0) {
+        if (isParsingHeaders) {
+          const headersEndIndex = currentChunk.indexOf('\r\n\r\n');
+          const boundaryEndIndex =
+            currentChunk.indexOf(boundary) + boundary.length + 2;
+          // if (headersEndIndex < 0) break;
+          currentHeaders += currentChunk.slice(
+            boundaryEndIndex,
+            headersEndIndex
           );
+          isFileContent = currentHeaders.includes(
+            'Content-Disposition: form-data; name="file"'
+          );
+          if (isFileContent) {
+            const filename = currentHeaders.match(/filename="(.+?)"/)?.[1];
+            const fileExtension = filename?.split('.').pop();
+            if (fileExtension !== 'jsonl') {
+              throw new Error(
+                'Invalid file extension, only jsonl files are supported'
+              );
+            }
+          }
+
+          currentChunk = currentChunk.slice(headersEndIndex + 4);
+          isParsingHeaders = false;
         }
 
-        if (result.error) {
-          this.end();
-          callback(result.error);
-          return;
+        const boundaryIndex = currentChunk.indexOf(boundary);
+
+        const safeLength = boundaryIndex ?? currentChunk.length;
+        // if (safeLength <= 0) break;
+
+        const content = currentChunk.slice(0, safeLength);
+        if (isFileContent) {
+          let uploadLength = 0;
+          [currentChunk, uploadLength] =
+            await transformAndUploadFileContentParts(
+              content,
+              currentChunk,
+              providerConfig,
+              this,
+              partNumber,
+              purpose ?? 'batch',
+              modelType ?? 'chat',
+              this.providerOptions
+            );
+          this.contentLength += uploadLength;
+          partNumber++;
+        } else {
+          currentChunk = currentChunk.slice(safeLength);
         }
 
-        if (buffer) {
-          passThrough.push(buffer);
+        if (currentChunk.startsWith(`${boundary}--`)) {
+          currentChunk = '';
+        } else if (currentChunk.startsWith(boundary)) {
+          isParsingHeaders = true;
+          currentHeaders = '';
+        } else {
+          break;
         }
-        callback();
-      },
-      flush: async (callback) => {
-        const partLength = await classThis.pushCurrentPart(
-          passThrough,
-          partNumber,
-          true
-        );
-        classThis.contentLength += partLength;
-        callback();
-      },
-    });
-
-    await pipeline(requestBody, lineReader, transform);
-    return result;
+      }
+      if (done) break;
+    }
   }
 
   async uploadPart(partNumber: number, partData: Uint8Array | Buffer) {
     const method = 'PUT';
     const partUrl = new URL(
-      `https://${this.bucket}.s3.${this.region}.${awsEndpointDomain}/${this.objectKey}?partNumber=${partNumber}&uploadId=${this.uploadId}`
+      `https://${this.bucket}.s3.${this.region}.amazonaws.com/${this.objectKey}?partNumber=${partNumber}&uploadId=${this.uploadId}`
     );
     const headers = await BedrockAPIConfig.headers({
       c: this.c,
@@ -264,7 +180,7 @@ class AwsMultipartUploadHandler {
       transformedRequestUrl: partUrl.toString(),
     });
 
-    const response = await retriableApiReq({}, partUrl.toString(), {
+    const response = await fetch(partUrl.toString(), {
       method,
       headers,
       body: partData,
@@ -288,32 +204,10 @@ class AwsMultipartUploadHandler {
     this.parts.push({ PartNumber: partNumber, ETag: eTag });
   }
 
-  async abortMultipartUpload() {
-    const method = 'DELETE';
-    const abortUrl = new URL(
-      `https://${this.bucket}.s3.${this.region}.${awsEndpointDomain}/${this.objectKey}?uploadId=${this.uploadId}`
-    );
-    this.c.set('method', 'DELETE');
-    const headers = await BedrockAPIConfig.headers({
-      c: this.c,
-      providerOptions: this.providerOptions,
-      fn: 'uploadFile',
-      transformedRequestUrl: abortUrl.toString(),
-      transformedRequestBody: '',
-    });
-
-    await externalServiceFetch(abortUrl.toString(), {
-      method,
-      headers,
-      body: '',
-    });
-    return true;
-  }
-
   async completeMultipartUpload() {
     const method = 'POST';
     const completeUrl = new URL(
-      `https://${this.bucket}.s3.${this.region}.${awsEndpointDomain}/${this.objectKey}?uploadId=${this.uploadId}`
+      `https://${this.bucket}.s3.${this.region}.amazonaws.com/${this.objectKey}?uploadId=${this.uploadId}`
     );
     const partsXml = this.parts
       .map(
@@ -332,7 +226,7 @@ class AwsMultipartUploadHandler {
       transformedRequestUrl: completeUrl.toString(),
     });
 
-    const response = await externalServiceFetch(completeUrl.toString(), {
+    const response = await fetch(completeUrl.toString(), {
       method,
       headers,
       body: payload,
@@ -353,6 +247,67 @@ class AwsMultipartUploadHandler {
     return response;
   }
 }
+
+const transformAndUploadFileContentParts = async (
+  chunk: string,
+  buffer: string,
+  providerConfig: ProviderConfig,
+  handler: AwsMultipartUploadHandler,
+  partNumber: number,
+  purpose: string,
+  modelType: string,
+  providerOptions: Options
+): Promise<[string, number]> => {
+  let transformedChunkToUpload = '';
+  const jsonLines = chunk.split('\n');
+  const numberOfLines = jsonLines.length;
+  for (let i = 0; i < numberOfLines; i++) {
+    const line = jsonLines[i];
+    if (line === '\r') {
+      buffer = buffer.slice(line.length + 1);
+      continue;
+    }
+    try {
+      const json = JSON.parse(line);
+      if (purpose === 'fine-tune') {
+        const transformedLine =
+          modelType === 'text'
+            ? tryChatToTextTransformation(json)
+            : transformFinetuneDatasetLine(json);
+        if (!transformedLine) {
+          // Skip this line if it is not a valid json line
+          continue;
+        }
+        transformedChunkToUpload += JSON.stringify(transformedLine) + '\r\n';
+        buffer = buffer.slice(line.length + 1);
+        continue;
+      }
+      const transformedLine = {
+        recordId: json.custom_id,
+        modelInput: transformUsingProviderConfig(
+          providerConfig,
+          json.body,
+          providerOptions
+        ),
+      };
+      transformedChunkToUpload += JSON.stringify(transformedLine) + '\r\n';
+      buffer = buffer.slice(line.length + 1);
+    } catch (error) {
+      if (i !== numberOfLines - 1) {
+        throw new Error(
+          'Your file contains invalid json lines, or empty lines, please fix them and try again: ' +
+            '\n failing line: ' +
+            line +
+            '\n failing chunk: ' +
+            chunk
+        );
+      }
+      // this is not a valid json line, so we don't update the buffer
+    }
+  }
+  await handler.uploadPart(partNumber, Buffer.from(transformedChunkToUpload));
+  return [buffer, transformedChunkToUpload.length];
+};
 
 const getProviderConfig = (modelSlug: string) => {
   let provider = '';
@@ -376,39 +331,10 @@ export const BedrockUploadFileRequestHandler: RequestHandler<
   requestHeaders,
   c,
 }) => {
-  const webStream = Readable.fromWeb(requestBody as any);
-  let onError: (() => Promise<void>) | null = null;
-  const cEnv = env(c);
   try {
     // get aws credentials and parse provider options
     if (providerOptions.awsAuthType === 'assumedRole') {
-      const { accessKeyId, secretAccessKey, sessionToken } =
-        (await getAssumedRoleCredentials(
-          providerOptions.awsRoleArn || '',
-          providerOptions.awsExternalId || '',
-          providerOptions.awsRegion || '',
-          undefined,
-          undefined,
-          cEnv
-        )) || {};
-      providerOptions.awsAccessKeyId = accessKeyId;
-      providerOptions.awsSecretAccessKey = secretAccessKey;
-      providerOptions.awsSessionToken = sessionToken;
-    } else if (providerOptions.awsAuthType === 'serviceRole') {
-      const { accessKeyId, secretAccessKey, sessionToken, awsRegion } =
-        (await getAssumedRoleCredentials(
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          cEnv
-        )) || {};
-      providerOptions.awsAccessKeyId = accessKeyId;
-      providerOptions.awsSecretAccessKey = secretAccessKey;
-      providerOptions.awsSessionToken = sessionToken;
-      // Only fallback to credentials region if user didn't specify one (for cross-region support)
-      providerOptions.awsRegion = providerOptions.awsRegion || awsRegion;
+      await providerAssumedRoleCredentials(c, providerOptions);
     }
     const {
       awsRegion,
@@ -424,7 +350,7 @@ export const BedrockUploadFileRequestHandler: RequestHandler<
         JSON.stringify({
           status: 'failure',
           message:
-            'Please make sure you have x-portkey-aws-s3-bucket, x-portkey-aws-s3-object-key and x-portkey-aws-bedrock-model headers provided.',
+            'Please make sure you have x-portkey-aws-s3-bucket and x-portkey-aws-bedrock-model headers provided.',
         }),
         {
           status: 400,
@@ -441,9 +367,9 @@ export const BedrockUploadFileRequestHandler: RequestHandler<
       const foundationModel = awsBedrockModel.includes('foundation-model/')
         ? awsBedrockModel.split('/').pop()
         : await getFoundationModelFromInferenceProfile(
+            c,
             awsBedrockModel,
-            providerOptions,
-            cEnv
+            providerOptions
           );
       if (foundationModel) {
         awsBedrockModel = foundationModel;
@@ -458,10 +384,7 @@ export const BedrockUploadFileRequestHandler: RequestHandler<
       c
     );
 
-    onError = async () => {
-      await handler.abortMultipartUpload();
-    };
-
+    const purpose = c.req.header(`x-${POWERED_BY}-file-purpose`) ?? 'batch';
     const modelType = requestHeaders[`x-${POWERED_BY}-model-type`];
 
     if (!awsBedrockModel || !awsS3Bucket)
@@ -471,30 +394,15 @@ export const BedrockUploadFileRequestHandler: RequestHandler<
 
     // upload file to s3
     await handler.initiateMultipartUpload();
-    const { purpose, error } = await handler.chunkAndUploadStream(
+    await handler.chunkAndUploadStream(
       awsBedrockModel,
-      webStream,
+      requestBody,
       requestHeaders,
+      purpose,
       modelType
     );
+    await handler.completeMultipartUpload();
 
-    if (!purpose || error) {
-      await onError?.();
-      const _errorMessage = !purpose
-        ? 'Purpose is invalid'
-        : error?.message || 'Unknown error';
-      return new Response(
-        JSON.stringify({
-          error: {
-            message: _errorMessage,
-            type: null,
-            param: null,
-            provider: BEDROCK,
-          },
-        }),
-        { status: 400 }
-      );
-    }
     // construct and return response
     const s3Url = `s3://${awsS3Bucket}/${awsS3ObjectKey}`;
     const responseJson = {
@@ -516,7 +424,7 @@ export const BedrockUploadFileRequestHandler: RequestHandler<
     });
   } catch (error: any) {
     let errorResponse;
-    await onError?.();
+
     try {
       errorResponse = JSON.parse(error.message);
       errorResponse.provider = BEDROCK;

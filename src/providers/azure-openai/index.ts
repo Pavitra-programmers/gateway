@@ -29,10 +29,7 @@ import {
   AzureOpenAIFinetuneResponseTransform,
   getAzureModelValue,
 } from './utils';
-import {
-  AzureOpenAICreateBatchConfig,
-  AzureOpenAICreateBatchRequestTransform,
-} from './createBatch';
+import { AzureOpenAICreateBatchConfig } from './createBatch';
 import { AzureOpenAIGetBatchOutputRequestHandler } from './getBatchOutput';
 import {
   createModelResponseParams,
@@ -43,8 +40,6 @@ import {
   OpenAIResponseTransform,
 } from '../open-ai-base';
 import { AZURE_OPEN_AI } from '../../globals';
-import { AzureOpenAiLogConfig } from './pricing';
-import { AzureImageEditRequestTransform } from './imageEdit';
 
 const AzureOpenAIConfig: ProviderConfigs = {
   complete: AzureOpenAICompleteConfig,
@@ -105,10 +100,7 @@ const AzureOpenAIConfig: ProviderConfigs = {
   requestTransforms: {
     createFinetune: AzureTransformFinetuneBody,
     uploadFile: OpenAIFileUploadRequestTransform,
-    imageEdit: AzureImageEditRequestTransform,
-    createBatch: AzureOpenAICreateBatchRequestTransform,
   },
-  pricing: AzureOpenAiLogConfig,
 };
 
 export default AzureOpenAIConfig;

@@ -1,5 +1,4 @@
 import { AI21, ANTHROPIC, COHERE } from '../../globals';
-import { Params } from '../../types/requestBody';
 import { ProviderConfigs } from '../types';
 import BedrockAPIConfig from './api';
 import { BedrockCancelBatchResponseTransform } from './cancelBatch';
@@ -39,7 +38,6 @@ import { BEDROCK_STABILITY_V1_MODELS } from './constants';
 import {
   BedrockCreateBatchConfig,
   BedrockCreateBatchResponseTransform,
-  BedrockCreateRequestBodyTransform,
 } from './createBatch';
 import {
   BedrockCreateFinetuneConfig,
@@ -51,7 +49,6 @@ import {
   BedrockTitanEmbedConfig,
   BedrockTitanEmbedResponseTransform,
 } from './embed';
-import { BedrockRerankConfig, BedrockRerankResponseTransform } from './rerank';
 import {
   BedrockGetBatchOutputRequestHandler,
   BedrockGetBatchOutputResponseTransform,
@@ -78,9 +75,7 @@ import {
 import { BedrockListFilesResponseTransform } from './listfiles';
 import { BedrockDeleteFileResponseTransform } from './deleteFile';
 import {
-  BedrockAnthropicMessagesResponseTransform,
-  BedrockAnthropicMessagesStreamChunkTransform,
-  BedrockConverseAnthropicMessagesConfig,
+  AnthropicBedrockConverseMessagesConfig as BedrockAnthropicConverseMessagesConfig,
   BedrockConverseMessagesConfig,
   BedrockConverseMessagesStreamChunkTransform,
   BedrockMessagesResponseTransform,
@@ -91,46 +86,37 @@ import {
   BedrockConverseMessageCountTokensResponseTransform,
 } from './countTokens';
 import { getBedrockModelWithoutRegion } from './utils';
-import { BedrockLogConfig } from './pricing';
-
-export const getProviderAndModel = (params: Params) => {
-  let providerModel = params.foundationModel || params.model || '';
-  providerModel = getBedrockModelWithoutRegion(providerModel);
-  const providerModelArray = providerModel?.split('.');
-  const provider = providerModelArray?.[0];
-  const model = providerModelArray?.slice(1).join('.');
-  return { provider, model };
-};
 
 const BedrockConfig: ProviderConfigs = {
   api: BedrockAPIConfig,
-  pricing: BedrockLogConfig,
   requestHandlers: {
     uploadFile: BedrockUploadFileRequestHandler,
     retrieveFile: BedrockRetrieveFileRequestHandler,
     getBatchOutput: BedrockGetBatchOutputRequestHandler,
     retrieveFileContent: BedrockRetrieveFileContentRequestHandler,
   },
-  getConfig: ({ params }) => {
+  getConfig: ({ params, providerOptions }) => {
     // To remove the region in case its a cross-region inference profile ID
     // https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference-support.html
     let config: ProviderConfigs = {};
 
     if (params.model) {
-      const { provider, model } = getProviderAndModel(params);
+      let providerModel = providerOptions.foundationModel || params.model;
+      providerModel = getBedrockModelWithoutRegion(providerModel);
+      const providerModelArray = providerModel?.split('.');
+      const provider = providerModelArray?.[0];
+      const model = providerModelArray?.slice(1).join('.');
       switch (provider) {
         case ANTHROPIC:
           config = {
             complete: BedrockAnthropicCompleteConfig,
             chatComplete: BedrockConverseAnthropicChatCompleteConfig,
-            messages: BedrockConverseAnthropicMessagesConfig,
-            api: BedrockAPIConfig,
+            messages: BedrockAnthropicConverseMessagesConfig,
             messagesCountTokens: BedrockAnthropicMessageCountTokensConfig,
+            api: BedrockAPIConfig,
             responseTransforms: {
               'stream-complete': BedrockAnthropicCompleteStreamChunkTransform,
               complete: BedrockAnthropicCompleteResponseTransform,
-              messages: BedrockAnthropicMessagesResponseTransform,
-              'stream-messages': BedrockAnthropicMessagesStreamChunkTransform,
             },
           };
           break;
@@ -144,8 +130,6 @@ const BedrockConfig: ProviderConfigs = {
               'stream-complete': BedrockCohereCompleteStreamChunkTransform,
               complete: BedrockCohereCompleteResponseTransform,
               embed: BedrockCohereEmbedResponseTransform,
-              messages: BedrockMessagesResponseTransform,
-              'stream-messages': BedrockConverseMessagesStreamChunkTransform,
             },
           };
           if (['command-text-v14', 'command-light-text-v14'].includes(model)) {
@@ -163,8 +147,6 @@ const BedrockConfig: ProviderConfigs = {
             responseTransforms: {
               'stream-complete': BedrockLlamaCompleteStreamChunkTransform,
               complete: BedrockLlamaCompleteResponseTransform,
-              messages: BedrockMessagesResponseTransform,
-              'stream-messages': BedrockConverseMessagesStreamChunkTransform,
             },
           };
           break;
@@ -175,8 +157,6 @@ const BedrockConfig: ProviderConfigs = {
             responseTransforms: {
               'stream-complete': BedrockMistralCompleteStreamChunkTransform,
               complete: BedrockMistralCompleteResponseTransform,
-              messages: BedrockMessagesResponseTransform,
-              'stream-messages': BedrockConverseMessagesStreamChunkTransform,
             },
           };
           break;
@@ -189,8 +169,6 @@ const BedrockConfig: ProviderConfigs = {
               'stream-complete': BedrockTitanCompleteStreamChunkTransform,
               complete: BedrockTitanCompleteResponseTransform,
               embed: BedrockTitanEmbedResponseTransform,
-              messages: BedrockMessagesResponseTransform,
-              'stream-messages': BedrockConverseMessagesStreamChunkTransform,
             },
           };
           break;
@@ -201,8 +179,6 @@ const BedrockConfig: ProviderConfigs = {
             chatComplete: BedrockConverseAI21ChatCompleteConfig,
             responseTransforms: {
               complete: BedrockAI21CompleteResponseTransform,
-              messages: BedrockMessagesResponseTransform,
-              'stream-messages': BedrockConverseMessagesStreamChunkTransform,
             },
           };
           if (['j2-mid-v1', 'j2-ultra-v1'].includes(model)) {
@@ -253,6 +229,12 @@ const BedrockConfig: ProviderConfigs = {
         ...(!config.responseTransforms?.['stream-chatComplete'] && {
           'stream-chatComplete': BedrockChatCompleteStreamChunkTransform,
         }),
+        ...(!config.responseTransforms?.messages && {
+          messages: BedrockMessagesResponseTransform,
+        }),
+        ...(!config.responseTransforms?.['stream-messages'] && {
+          'stream-messages': BedrockConverseMessagesStreamChunkTransform,
+        }),
         ...(!config.responseTransforms?.messagesCountTokens && {
           messagesCountTokens:
             BedrockConverseMessageCountTokensResponseTransform,
@@ -273,7 +255,6 @@ const BedrockConfig: ProviderConfigs = {
       listFinetunes: BedrockListFinetuneResponseTransform,
       listFiles: BedrockListFilesResponseTransform,
       deleteFile: BedrockDeleteFileResponseTransform,
-      rerank: BedrockRerankResponseTransform,
     };
     if (!config.responseTransforms) {
       config.responseTransforms = commonResponseTransforms;
@@ -285,13 +266,8 @@ const BedrockConfig: ProviderConfigs = {
     }
     config.createBatch = BedrockCreateBatchConfig;
     config.createFinetune = BedrockCreateFinetuneConfig;
-    config.rerank = BedrockRerankConfig;
     config.cancelBatch = {};
     config.cancelFinetune = {};
-    config.requestTransforms = {
-      ...(config.requestTransforms ?? {}),
-      createBatch: BedrockCreateRequestBodyTransform,
-    };
     return config;
   },
 };

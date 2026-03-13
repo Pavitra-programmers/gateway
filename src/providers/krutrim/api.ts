@@ -2,7 +2,7 @@ import { ProviderAPIConfig } from '../types';
 
 const KrutrimAPIConfig: ProviderAPIConfig = {
   getBaseURL: () => 'https://cloud.olakrutrim.com/v1',
-  headers: ({ providerOptions }) => {
+  headers: ({ providerOptions, fn }) => {
     const headersObj: Record<string, string> = {
       Authorization: `Bearer ${providerOptions.apiKey}`,
     };

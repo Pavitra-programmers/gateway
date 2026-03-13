@@ -6,7 +6,6 @@ import {
 } from './chatComplete';
 import { PalmCompleteConfig, PalmCompleteResponseTransform } from './complete';
 import { PalmEmbedConfig, PalmEmbedResponseTransform } from './embed';
-import { PalmLogConfig } from './pricing';
 
 const PalmAIConfig: ProviderConfigs = {
   complete: PalmCompleteConfig,
@@ -18,7 +17,6 @@ const PalmAIConfig: ProviderConfigs = {
     chatComplete: PalmChatCompleteResponseTransform,
     embed: PalmEmbedResponseTransform,
   },
-  pricing: PalmLogConfig,
 };
 
 export default PalmAIConfig;

@@ -5,13 +5,8 @@ import { BedrockGetBatchResponse } from './types';
 import { getOctetStreamToOctetStreamTransformer } from '../../handlers/streamHandlerUtils';
 import { BedrockUploadFileResponseTransforms } from './uploadFileUtils';
 import { BEDROCK } from '../../globals';
-import {
-  awsEndpointDomain,
-  getBedrockFoundationModel,
-  getRegionFromEnv,
-} from './utils';
-import { externalServiceFetch } from '../../utils/fetch';
-import { env } from 'hono/adapter';
+import { generateErrorResponse } from '../utils';
+import { getAwsEndpointDomain } from './utils';
 
 const getModelProvider = (modelId: string) => {
   let provider = '';
@@ -56,7 +51,7 @@ export const BedrockGetBatchOutputRequestHandler = async ({
   c: Context;
   providerOptions: Options;
   requestURL: string;
-}) => {
+}): Promise<Response> => {
   try {
     // get s3 file id from batch details
     // get file from s3
@@ -77,40 +72,36 @@ export const BedrockGetBatchOutputRequestHandler = async ({
       transformedRequestUrl: retrieveBatchURL,
       gatewayRequestBody: {},
     });
-    const retrieveBatchesResponse = await externalServiceFetch(
-      retrieveBatchURL,
-      {
-        method: 'GET',
-        headers: retrieveBatchesHeaders,
-      }
-    );
+    const retrieveBatchesResponse = await fetch(retrieveBatchURL, {
+      method: 'GET',
+      headers: retrieveBatchesHeaders,
+    });
 
     if (!retrieveBatchesResponse.ok) {
       const error = await retrieveBatchesResponse.text();
-      const _error = {
-        message: error,
-        param: null,
-        type: null,
-      };
-      return new Response(
-        JSON.stringify({ error: _error, provider: BEDROCK }),
+      const _response = generateErrorResponse(
         {
-          status: retrieveBatchesResponse.status,
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        }
+          message: error,
+          type: null,
+          param: null,
+          code: null,
+        },
+        BEDROCK
       );
+
+      return new Response(JSON.stringify(_response), {
+        status: 500,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
     }
 
     const batchDetails: BedrockGetBatchResponse =
       await retrieveBatchesResponse.json();
     const outputFileId = batchDetails.outputDataConfig.s3OutputDataConfig.s3Uri;
 
-    let awsRegion = providerOptions.awsRegion;
-    if (providerOptions.awsAuthType === 'serviceRole') {
-      awsRegion = providerOptions.awsRegion || getRegionFromEnv();
-    }
+    const { awsRegion } = providerOptions;
     const awsS3Bucket = outputFileId.replace('s3://', '').split('/')[0];
     const jobId = batchDetails.jobArn.split('/')[1];
     const inputS3URIParts =
@@ -119,12 +110,9 @@ export const BedrockGetBatchOutputRequestHandler = async ({
     const primaryKey = outputFileId?.replace(`s3://${awsS3Bucket}/`, '') ?? '';
 
     const awsS3ObjectKey = `${primaryKey}${jobId}/${inputS3URIParts[inputS3URIParts.length - 1]}.out`;
-    const awsModelProvider = await getBedrockFoundationModel(
-      batchDetails.modelId,
-      providerOptions,
-      env(c)
-    );
-    const s3FileURL = `https://${awsS3Bucket}.s3.${awsRegion}.${awsEndpointDomain}/${awsS3ObjectKey}`;
+    const awsModelProvider = batchDetails.modelId;
+
+    const s3FileURL = `https://${awsS3Bucket}.s3.${awsRegion}.${getAwsEndpointDomain(c)}/${awsS3ObjectKey}`;
     const s3FileHeaders = await BedrockAPIConfig.headers({
       c,
       providerOptions,
@@ -133,7 +121,7 @@ export const BedrockGetBatchOutputRequestHandler = async ({
       transformedRequestUrl: s3FileURL,
       gatewayRequestBody: {},
     });
-    const s3FileResponse = await externalServiceFetch(s3FileURL, {
+    const s3FileResponse = await fetch(s3FileURL, {
       method: 'GET',
       headers: s3FileHeaders,
     });

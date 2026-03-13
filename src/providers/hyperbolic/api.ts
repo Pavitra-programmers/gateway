@@ -4,7 +4,7 @@ const HYPERBOLIC_API_URL = 'https://api.hyperbolic.xyz';
 
 const HyperbolicAPIConfig: ProviderAPIConfig = {
   getBaseURL: () => HYPERBOLIC_API_URL,
-  headers: ({ providerOptions }) => {
+  headers: ({ providerOptions, fn }) => {
     const headersObj: Record<string, string> = {
       Authorization: `Bearer ${providerOptions.apiKey}`,
     };

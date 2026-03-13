@@ -1,3 +1,6 @@
+# Local configuration file
+conf.json
+
 # Logs
 logs
 *.log
@@ -120,7 +123,6 @@ dist
 .tern-port
 
 # Stores VSCode versions used for testing VSCode extensions
-.vscode
 .vscode-test
 
 # yarn v2
@@ -129,16 +131,19 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
-
 .dev.vars
+
+# Rollup build dir
+build
+.DS_Store
+
+# Wrangler temp directory
 .wrangler
 
-secrets*
-
-build
-src/plugins/**/.creds.json
-src/plugins/**/creds.json
-src/plugins/exa/.creds.json
-*.pem
-test-jwt-validation.ts
-test-mcp-server.py
+# IntelliJ Idea
+.idea
+plugins/**/.creds.json
+plugins/**/creds.json
+plugins/**/.parameters.json
+src/handlers/tests/.creds.json
+.cursor/

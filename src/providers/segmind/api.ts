@@ -5,8 +5,8 @@ const SegmindAIAPIConfig: ProviderAPIConfig = {
   headers: ({ providerOptions }) => {
     return { 'x-api-key': `${providerOptions.apiKey}` };
   },
-  getEndpoint: ({ gatewayRequestBodyJSON: gatewayRequestBody }) => {
-    return `/${gatewayRequestBody.model}`;
+  getEndpoint: ({ gatewayRequestBodyJSON }) => {
+    return `/${gatewayRequestBodyJSON.model}`;
   },
 };
 

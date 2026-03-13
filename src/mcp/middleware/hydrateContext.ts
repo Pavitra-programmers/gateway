@@ -1,294 +1,252 @@
-import { createMiddleware } from 'hono/factory';
-import { ServerConfig } from '../types/mcp';
-import { createLogger } from '../../shared/utils/logger';
-import { McpCacheService, getConfigCache } from '../services/mcpCacheService';
-import { ControlPlane } from './controlPlane';
-import { Context, Next } from 'hono';
-import { Environment } from '../../utils/env';
+/**
+ * MCP Gateway Context Hydration Middleware
+ * Extracts serverUrl and apiKey, builds server config, and adds to context
+ */
 
-const logger = createLogger('mcp/hydrateContext');
+import type { Context, Next } from 'hono';
+import { HTTPException } from 'hono/http-exception';
+import { getControlPlane } from './controlPlane.js';
+import { logger } from '../utils/logger.js';
+import { MCP_HEADERS, ERROR_MESSAGES, CONTENT_TYPES } from '../constants/index.js';
+import { normalizeServerUrl } from '../services/oauthState.js';
+import type { MCPContext, ServerConfig, ToolkitConfig, ToolPermission, TransportType } from '../types/index.js';
 
-const TTL = 1 * 60 * 1000;
+const log = logger.child('hydrateContext');
 
-let LOCAL_CONFIGS_LOADED: boolean = false;
+// Key for storing MCP context in Hono's c.set()
+export const MCP_CONTEXT_KEY = 'mcpContext';
 
 /**
- * Check if this is a managed SaaS deployment
- * External auth is only allowed for enterprise deployments
+ * Extract server URL from request
+ * Priority: context (set by validateUrlMiddleware) > query param
  */
-const isManagedDeployment = (): boolean => {
-  return Environment({}).MANAGED_DEPLOYMENT === 'ON';
-};
-
-type Env = {
-  Variables: {
-    serverConfig: ServerConfig;
-    session?: any;
-    tokenInfo?: any;
-    isAuthenticated?: boolean;
-    controlPlane?: ControlPlane;
-  };
-  Bindings: {
-    ALBUS_BASEPATH?: string;
-  };
-};
-
-/**
- * Load and cache all local server configurations
- */
-const loadLocalServerConfigs = async (
-  configCache: McpCacheService
-): Promise<boolean> => {
-  if (LOCAL_CONFIGS_LOADED) return true;
-
-  try {
-    const serverConfigPath =
-      process.env.SERVERS_CONFIG_PATH || './data/servers.json';
-
-    const fs = await import('fs');
-    const path = await import('path');
-
-    const configPath = path.resolve(serverConfigPath);
-    const configData = await fs.promises.readFile(configPath, 'utf-8');
-    const config = JSON.parse(configData);
-
-    const serverConfigs = config.servers || {};
-
-    Object.keys(serverConfigs).forEach((id: string) => {
-      const serverConfig = serverConfigs[id];
-      configCache.set(id, {
-        ...serverConfig,
-        workspaceId: id.split('/')[0],
-        serverId: id.split('/')[1],
-      });
-    });
-
-    logger.info(`Loaded ${Object.keys(serverConfigs).length} server configs`);
-    LOCAL_CONFIGS_LOADED = true;
-    return true;
-  } catch (error) {
-    logger.warn('Failed to load local server configurations:', error);
-    throw error;
+export function extractServerUrl(c: Context): string | null {
+  // From context (set by validateUrlMiddleware)
+  const contextUrl = c.get('serverUrl') as string | undefined;
+  if (contextUrl) {
+    return normalizeServerUrl(contextUrl);
   }
-};
 
-const getFromCP = async (
-  cp: ControlPlane,
-  workspaceId: string,
-  serverId: string,
-  organisationId?: string
-) => {
-  try {
-    logger.debug(`Fetching server from control plane`);
-
-    const serverInfo: any = await cp.getMCPServer(
-      workspaceId,
-      serverId,
-      organisationId
-    );
-
-    if (serverInfo) {
-      return {
-        serverId,
-        workspaceId,
-        organisationId,
-        url: serverInfo.mcp_integration_details?.url,
-        headers:
-          serverInfo.mcp_integration_details?.configurations?.headers ||
-          serverInfo.default_headers ||
-          {},
-        passthroughHeaders:
-          serverInfo.mcp_integration_details?.configurations
-            ?.passthrough_headers || undefined,
-        forwardHeaders:
-          serverInfo.mcp_integration_details?.configurations?.forward_headers ||
-          undefined,
-        auth_type: serverInfo.mcp_integration_details?.auth_type || 'none',
-        type: serverInfo.mcp_integration_details?.transport || 'http',
-        oauth_client_metadata:
-          serverInfo.mcp_integration_details?.configurations?.oauth_metadata ||
-          undefined,
-        oauth_server_metadata: serverInfo.mcp_integration_details
-          ?.configurations?.oauth_metadata
-          ? {
-              // Required fields
-              issuer:
-                serverInfo.mcp_integration_details.configurations.oauth_metadata
-                  .issuer,
-              authorization_endpoint:
-                serverInfo.mcp_integration_details.configurations.oauth_metadata
-                  .authorization_endpoint,
-              token_endpoint:
-                serverInfo.mcp_integration_details.configurations.oauth_metadata
-                  .token_endpoint,
-              response_types_supported: serverInfo.mcp_integration_details
-                .configurations.oauth_metadata.response_types_supported || [
-                'code',
-              ],
-              // Optional but commonly needed
-              registration_endpoint:
-                serverInfo.mcp_integration_details.configurations.oauth_metadata
-                  .registration_endpoint,
-              code_challenge_methods_supported: serverInfo
-                .mcp_integration_details.configurations.oauth_metadata
-                .code_challenge_methods_supported || ['S256'],
-              token_endpoint_auth_methods_supported:
-                serverInfo.mcp_integration_details.configurations.oauth_metadata
-                  .token_endpoint_auth_methods_supported,
-              grant_types_supported:
-                serverInfo.mcp_integration_details.configurations.oauth_metadata
-                  .grant_types_supported,
-              scopes_supported:
-                serverInfo.mcp_integration_details.configurations.oauth_metadata
-                  .scopes_supported,
-              revocation_endpoint:
-                serverInfo.mcp_integration_details.configurations.oauth_metadata
-                  .revocation_endpoint,
-            }
-          : undefined,
-        user_identity_forwarding:
-          serverInfo.mcp_integration_details?.configurations
-            ?.user_identity_forwarding || undefined,
-        jwt_validation:
-          serverInfo.mcp_integration_details?.configurations?.jwt_validation ||
-          undefined,
-        // External auth configuration for servers that handle OAuth externally
-        // Note: external_auth_config is only allowed for enterprise deployments
-        external_auth_config:
-          !isManagedDeployment() &&
-          serverInfo.mcp_integration_details?.configurations
-            ?.external_auth_config
-            ? {
-                issuer:
-                  serverInfo.mcp_integration_details.configurations
-                    .external_auth_config.issuer,
-                authorization_endpoint:
-                  serverInfo.mcp_integration_details.configurations
-                    .external_auth_config.authorization_endpoint,
-                token_endpoint:
-                  serverInfo.mcp_integration_details.configurations
-                    .external_auth_config.token_endpoint,
-                registration_endpoint:
-                  serverInfo.mcp_integration_details.configurations
-                    .external_auth_config.registration_endpoint,
-                revocation_endpoint:
-                  serverInfo.mcp_integration_details.configurations
-                    .external_auth_config.revocation_endpoint,
-                code_challenge_methods_supported: serverInfo
-                  .mcp_integration_details.configurations.external_auth_config
-                  .code_challenge_methods_supported || ['S256'],
-                token_endpoint_auth_methods_supported:
-                  serverInfo.mcp_integration_details.configurations
-                    .external_auth_config.token_endpoint_auth_methods_supported,
-                grant_types_supported:
-                  serverInfo.mcp_integration_details.configurations
-                    .external_auth_config.grant_types_supported,
-                scopes_supported:
-                  serverInfo.mcp_integration_details.configurations
-                    .external_auth_config.scopes_supported,
-                response_types_supported: serverInfo.mcp_integration_details
-                  .configurations.external_auth_config
-                  .response_types_supported || ['code'],
-                client_id:
-                  serverInfo.mcp_integration_details.configurations
-                    .external_auth_config.client_id,
-                client_secret:
-                  serverInfo.mcp_integration_details.configurations
-                    .external_auth_config.client_secret,
-                scope:
-                  serverInfo.mcp_integration_details.configurations
-                    .external_auth_config.scope,
-              }
-            : undefined,
-      } as ServerConfig;
+  // From query param (fallback - decode base64url)
+  const encodedUrl = c.req.query('url');
+  if (encodedUrl) {
+    try {
+      const decoded = Buffer.from(encodedUrl, 'base64url').toString('utf-8');
+      return normalizeServerUrl(decoded);
+    } catch {
+      return null;
     }
-  } catch (error) {
-    logger.warn(
-      `Failed to fetch server ${workspaceId}/${serverId} from control plane`
-    );
-    return null;
   }
-};
 
-const success = (c: Context, serverInfo: ServerConfig, next: Next) => {
-  c.set('serverConfig', serverInfo);
-  return next();
-};
+  return null;
+}
 
-const error = (c: Context, workspaceId: string, serverId: string) => {
-  logger.error(
-    `Server configuration not found for: ${workspaceId}/${serverId}`
-  );
-  return c.json(
-    {
-      error: 'not_found',
-      error_description: `Server '${workspaceId}/${serverId}' not found`,
+/**
+ * Extract API key from request
+ * Checks headers first, then falls back to presigned token info
+ */
+export function extractApiKey(c: Context): string | null {
+  // From headers
+  const headerKey = c.req.header('x-portkey-api-key') || c.req.header(MCP_HEADERS.API_KEY);
+  if (headerKey) {
+    return headerKey;
+  }
+
+  // From presigned auth token info (set by presignedAuthMiddleware)
+  const tokenInfo = c.get('tokenInfo') as { client_id?: string; token?: string } | undefined;
+  if (tokenInfo?.client_id) {
+    // Use client_id from token as the "apiKey" for cache keys
+    return `presigned:${tokenInfo.client_id}`;
+  }
+
+  return null;
+}
+
+/**
+ * Extract toolkit ID from request (optional)
+ */
+function extractToolkitId(c: Context): string | null {
+  return c.req.header(MCP_HEADERS.TOOLKIT_ID) || c.req.query('toolkit') || null;
+}
+
+/**
+ * Determine client transport type from request
+ */
+function determineClientTransportType(c: Context): TransportType {
+  const accept = c.req.header(MCP_HEADERS.ACCEPT) || '';
+
+  if (accept.includes(CONTENT_TYPES.SSE)) {
+    return 'sse';
+  }
+
+  if (accept.includes(CONTENT_TYPES.JSON)) {
+    return 'http';
+  }
+
+  // Default based on method
+  if (c.req.method === 'GET') {
+    return 'sse';
+  }
+
+  return 'http';
+}
+
+/**
+ * Build server config from URL (for URL-based routing)
+ */
+function buildServerConfigFromUrl(serverUrl: string): ServerConfig {
+  // Detect transport type from URL
+  let transport: TransportType = 'http';
+  if (serverUrl.includes('/sse') || serverUrl.endsWith('/sse')) {
+    transport = 'sse';
+  }
+
+  return {
+    serverId: serverUrl, // Use URL as serverId for cache keys
+    url: serverUrl,
+    serverLabel: `MCP Server: ${new URL(serverUrl).hostname}`,
+    transport: {
+      preferred: transport,
+      allowFallback: true,
     },
-    404
-  );
-};
+    authType: 'none', // Will be updated if OAuth tokens are found
+    isActive: true,
+  };
+}
 
 /**
- * Get server configuration by ID, trying control plane first if available
+ * Hydrate context middleware
+ * Extracts serverUrl and apiKey, builds config, adds to request context
  */
-export const getServerConfig = async (
-  workspaceId: string,
-  serverId: string,
-  c: any,
-  organisationId?: string
-): Promise<any> => {
-  const configCache = getConfigCache();
-  const cacheKey = `${workspaceId}/${serverId}`;
+export async function hydrateContext(c: Context, next: Next): Promise<void | Response> {
+  const serverUrl = extractServerUrl(c);
+  const apiKey = extractApiKey(c);
+  const toolkitId = extractToolkitId(c);
 
-  const cached = await configCache.get(cacheKey);
-  if (cached) return cached;
+  log.debug('Hydrating context', { serverUrl, hasApiKey: !!apiKey, toolkitId });
 
-  const CP = c.get('controlPlane');
-  if (CP) {
-    const serverInfo = await getFromCP(
-      CP,
-      Environment({}).MCP_WORKSPACE_ID || workspaceId,
-      serverId,
-      organisationId || Environment({}).MCP_ORGANISATION_ID
-    );
-
-    if (serverInfo) {
-      await configCache.set(
-        cacheKey,
-        { ...serverInfo, workspaceId, serverId },
-        { ttl: TTL }
-      );
-    }
-    return serverInfo; // Return null if not found in CP - don't fallback
-  } else {
-    // Only use local configs when no Control Plane is available
-    if (!LOCAL_CONFIGS_LOADED) {
-      await loadLocalServerConfigs(configCache);
-    }
-    return await configCache.get(cacheKey);
-  }
-};
-
-export const hydrateContext = createMiddleware<Env>(async (c, next) => {
-  const serverId = c.req.param('serverId');
-  const workspaceId =
-    c.req.param('workspaceId') !== undefined
-      ? c.req.param('workspaceId')
-      : c.get('tokenInfo')?.workspace_id;
-  const organisationId = c.get('tokenInfo')?.organisation_id;
-
-  if (!serverId || !workspaceId) {
-    return next();
+  // Validate required parameters
+  if (!serverUrl) {
+    log.warn('Missing server URL');
+    throw new HTTPException(400, { message: 'Missing server URL. Provide url query parameter.' });
   }
 
-  // Check cache for server config
-  const serverInfo = await getServerConfig(
-    workspaceId,
-    serverId,
-    c,
-    organisationId
-  );
-  if (serverInfo) return success(c, serverInfo, next);
+  if (!apiKey) {
+    log.warn('Missing API key');
+    throw new HTTPException(401, { message: 'Missing API key. Provide x-portkey-api-key header.' });
+  }
 
-  return error(c, workspaceId, serverId);
-});
+  const controlPlane = getControlPlane();
+
+  // Build server config from URL
+  // In production, this could be enhanced to fetch additional config from control plane
+  let serverConfig: ServerConfig = buildServerConfigFromUrl(serverUrl);
+
+  // Fetch toolkit config if toolkit ID provided
+  let toolkitConfig: ToolkitConfig | undefined;
+  if (toolkitId) {
+    try {
+      const toolkit = await controlPlane.getMCPToolkitByApiKey(apiKey, toolkitId);
+      if (toolkit) {
+        if (!toolkit.isActive) {
+          log.warn('Toolkit not active', { toolkitId });
+          throw new HTTPException(403, { message: ERROR_MESSAGES.TOOLKIT_NOT_ACTIVE });
+        }
+        toolkitConfig = toolkit;
+      } else {
+        log.warn('Toolkit not found', { toolkitId });
+        throw new HTTPException(404, { message: ERROR_MESSAGES.TOOLKIT_NOT_FOUND });
+      }
+    } catch (error) {
+      if (error instanceof HTTPException) {
+        throw error;
+      }
+      log.error('Failed to fetch toolkit config', { toolkitId, error });
+      throw new HTTPException(500, { message: 'Failed to fetch toolkit configuration' });
+    }
+  }
+
+  // If no toolkit from header, check for tool_permissions in presigned token metadata
+  if (!toolkitConfig) {
+    const tokenInfo = c.get('tokenInfo') as { payload?: { meta?: Record<string, unknown> } } | undefined;
+    const tokenToolPermissions = tokenInfo?.payload?.meta?.tool_permissions as Record<string, unknown> | undefined;
+
+    if (tokenToolPermissions && Object.keys(tokenToolPermissions).length > 0) {
+      // Build a synthetic toolkit config from token's tool_permissions
+      toolkitConfig = {
+        id: `presigned:${tokenInfo?.payload?.meta?.mcp_server_name || 'anonymous'}`,
+        name: `Presigned Token Permissions`,
+        description: 'Fine-grained permissions from presigned URL token',
+        allowedTools: [],  // Not using glob patterns, using fine-grained permissions
+        blockedTools: [],
+        toolPermissions: tokenToolPermissions as Record<string, ToolPermission>,
+        mcpServerIds: [],
+        isActive: true,
+      };
+      log.debug('Built toolkit config from presigned token', {
+        permissionCount: Object.keys(tokenToolPermissions).length,
+      });
+    }
+  }
+
+  // Fetch OAuth tokens using apiKey + serverUrl
+  let tokens;
+  try {
+    tokens = await controlPlane.getMCPTokensByUrl(apiKey, serverUrl);
+    if (tokens) {
+      // If we have tokens, update auth type
+      serverConfig = {
+        ...serverConfig,
+        authType: 'oauth',
+      };
+      log.debug('Found OAuth tokens for server', { serverUrl });
+    }
+  } catch (error) {
+    log.debug('No OAuth tokens found', { serverUrl, error });
+    // Continue without tokens
+  }
+
+  // Determine client transport type
+  const clientTransportType = determineClientTransportType(c);
+
+  // Create MCP context
+  const mcpContext: MCPContext = {
+    serverUrl,
+    apiKey,
+    serverConfig,
+    toolkitConfig,
+    tokens: tokens ?? undefined,
+    clientTransportType,
+  };
+
+  // Store in Hono context
+  c.set(MCP_CONTEXT_KEY, mcpContext);
+
+  log.debug('Context hydrated successfully', {
+    serverUrl,
+    serverLabel: serverConfig.serverLabel,
+    hasToolkit: !!toolkitConfig,
+    hasTokens: !!tokens,
+    clientTransportType,
+  });
+
+  await next();
+}
+
+/**
+ * Get MCP context from Hono context
+ */
+export function getMCPContext(c: Context): MCPContext {
+  const ctx = c.get(MCP_CONTEXT_KEY) as MCPContext | undefined;
+  if (!ctx) {
+    throw new Error('MCP context not found. Did you forget to apply hydrateContext middleware?');
+  }
+  return ctx;
+}
+
+/**
+ * Check if MCP context exists
+ */
+export function hasMCPContext(c: Context): boolean {
+  return c.get(MCP_CONTEXT_KEY) !== undefined;
+}

@@ -1,5 +1,4 @@
 import { CONTENT_TYPES } from '../../globals';
-import { Params } from '../../types/requestBody';
 import { ProviderAPIConfig } from '../types';
 import { isStabilityV1Model } from './utils';
 
@@ -9,17 +8,12 @@ const StabilityAIAPIConfig: ProviderAPIConfig = {
     const headers: Record<string, string> = {
       Authorization: `Bearer ${providerOptions.apiKey}`,
     };
-    if (isStabilityV1Model((gatewayRequestBody as Params)?.model))
-      return headers;
+    if (isStabilityV1Model(gatewayRequestBody?.model)) return headers;
     headers['Content-Type'] = CONTENT_TYPES.MULTIPART_FORM_DATA;
     headers['Accept'] = CONTENT_TYPES.APPLICATION_JSON;
     return headers;
   },
-  getEndpoint: ({
-    fn,
-    gatewayRequestBodyJSON: gatewayRequestBody,
-    providerOptions,
-  }) => {
+  getEndpoint: ({ fn, gatewayRequestBodyJSON, providerOptions }) => {
     let mappedFn = fn;
     const { urlToFetch } = providerOptions;
     if (
@@ -32,9 +26,9 @@ const StabilityAIAPIConfig: ProviderAPIConfig = {
 
     switch (mappedFn) {
       case 'imageGenerate': {
-        if (isStabilityV1Model(gatewayRequestBody.model))
-          return `/v1/generation/${gatewayRequestBody.model}/text-to-image`;
-        return `/v2beta/stable-image/generate/${gatewayRequestBody.model}`;
+        if (isStabilityV1Model(gatewayRequestBodyJSON.model))
+          return `/v1/generation/${gatewayRequestBodyJSON.model}/text-to-image`;
+        return `/v2beta/stable-image/generate/${gatewayRequestBodyJSON.model}`;
       }
       default:
         return '';

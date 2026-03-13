@@ -2,10 +2,8 @@ import { Context } from 'hono';
 import CohereAPIConfig from './api';
 import { Options } from '../../types/requestBody';
 import { CohereGetFileResponse, CohereRetrieveBatchResponse } from './types';
-import avro from 'avsc';
 import { CohereEmbedResponseTransformBatch } from './embed';
 import { COHERE } from '../../globals';
-import { externalServiceFetch } from '../../utils/fetch';
 
 export const CohereGetBatchOutputHandler = async ({
   c,
@@ -39,13 +37,10 @@ export const CohereGetBatchOutputHandler = async ({
       transformedRequestBody: {},
     });
     // get the batch details
-    const retrieveBatchResponse = await externalServiceFetch(
-      baseURL + endpoint,
-      {
-        method: 'GET',
-        headers,
-      }
-    );
+    const retrieveBatchResponse = await fetch(baseURL + endpoint, {
+      method: 'GET',
+      headers,
+    });
     if (!retrieveBatchResponse.ok) {
       const errorText = await retrieveBatchResponse.text();
       throw new Error(
@@ -62,7 +57,7 @@ export const CohereGetBatchOutputHandler = async ({
     const outputFileId = batchDetails.output_dataset_id;
 
     // get the file details
-    const retrieveFileResponse = await externalServiceFetch(
+    const retrieveFileResponse = await fetch(
       `https://api.cohere.ai/v1/datasets/${outputFileId}`,
       {
         method: 'GET',
@@ -91,12 +86,13 @@ export const CohereGetBatchOutputHandler = async ({
       start: async (controller) => {
         const fileParts = retrieveFileResponseJson.dataset.dataset_parts;
         for (const filePart of fileParts) {
-          const filePartResponse = await externalServiceFetch(filePart.url, {
+          const filePartResponse = await fetch(filePart.url, {
             method: 'GET',
             headers,
           });
           const arrayBuffer = await filePartResponse.arrayBuffer();
           const buf = Buffer.from(arrayBuffer);
+          const avro = require('avsc');
           const decoder = new avro.streams.BlockDecoder({
             parseHook: (schema: any) => {
               return avro.Type.forSchema(schema, { wrapUnions: true });

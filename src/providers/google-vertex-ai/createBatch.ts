@@ -1,4 +1,4 @@
-import { constructConfigFromRequestHeaders } from '../../utils/request';
+import { constructConfigFromRequestHeaders } from '../../handlers/handlerUtils';
 import { transformUsingProviderConfig } from '../../services/transformToProviderRequest';
 import { Options } from '../../types/requestBody';
 import { ProviderConfig } from '../types';
@@ -10,13 +10,6 @@ export const GoogleBatchCreateConfig: ProviderConfig = {
     param: 'model',
     required: true,
     transform: (params: Record<string, any>) => {
-      // Custom model or base model can start with project or publishers pass the model as is.
-      if (
-        params.model?.startsWith('projects') ||
-        params.model?.startsWith('publishers')
-      ) {
-        return params.model;
-      }
       const { model, provider } = getModelAndProvider(params.model);
       return `publishers/${provider}/models/${model}`;
     },

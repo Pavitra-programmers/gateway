@@ -1,5 +1,5 @@
 import { PERPLEXITY_AI } from '../../globals';
-import { Message, Params } from '../../types/requestBody';
+import { Params } from '../../types/requestBody';
 import {
   ChatCompletionResponse,
   ErrorResponse,
@@ -23,7 +23,7 @@ export const PerplexityAIChatCompleteConfig: ProviderConfig = {
     required: true,
     default: [],
     transform: (params: Params) => {
-      return params.messages?.map((message: Message) => {
+      return params.messages?.map((message) => {
         if (message.role === 'developer') return { ...message, role: 'system' };
         return message;
       });
@@ -106,13 +106,12 @@ export interface PerplexityAIChatCompleteResponse {
   model: string;
   object: string;
   created: number;
-  citations?: string[];
+  citations: string[];
   choices: PerplexityAIChatChoice[];
   usage: {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
-    num_search_queries: number;
   };
 }
 
@@ -134,7 +133,6 @@ export interface PerplexityAIChatCompletionStreamChunk {
     prompt_tokens: number;
     completion_tokens: number;
     total_tokens: number;
-    num_search_queries: number;
   };
   choices: PerplexityAIChatChoice[];
 }
@@ -187,7 +185,6 @@ export const PerplexityAIChatCompleteResponseTransform: (
         prompt_tokens: response.usage.prompt_tokens,
         completion_tokens: response.usage.completion_tokens,
         total_tokens: response.usage.total_tokens,
-        num_search_queries: response.usage.num_search_queries,
       },
     };
   }
@@ -202,7 +199,7 @@ export const PerplexityAIChatCompleteStreamChunkTransform: (
   strictOpenAiCompliance: boolean
 ) => string = (
   responseChunk,
-  _fallbackId,
+  fallbackId,
   _streamState,
   strictOpenAiCompliance
 ) => {
@@ -211,7 +208,7 @@ export const PerplexityAIChatCompleteStreamChunkTransform: (
   chunk = chunk.trim();
 
   const parsedChunk: PerplexityAIChatCompletionStreamChunk = JSON.parse(chunk);
-  const returnChunk =
+  let returnChunk =
     `data: ${JSON.stringify({
       id: parsedChunk.id,
       object: parsedChunk.object,

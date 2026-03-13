@@ -9,8 +9,6 @@ const ZAIAPIConfig: ProviderAPIConfig = {
     switch (fn) {
       case 'chatComplete':
         return '/chat/completions';
-      case 'imageGenerate':
-        return '/images/generations';
       default:
         return '';
     }

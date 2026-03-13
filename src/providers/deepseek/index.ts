@@ -5,7 +5,6 @@ import {
   DeepSeekChatCompleteResponseTransform,
   DeepSeekChatCompleteStreamChunkTransform,
 } from './chatComplete';
-import { DeepseekLogConfig } from './pricing';
 
 const DeepSeekConfig: ProviderConfigs = {
   chatComplete: DeepSeekChatCompleteConfig,
@@ -14,7 +13,6 @@ const DeepSeekConfig: ProviderConfigs = {
     chatComplete: DeepSeekChatCompleteResponseTransform,
     'stream-chatComplete': DeepSeekChatCompleteStreamChunkTransform,
   },
-  pricing: DeepseekLogConfig,
 };
 
 export default DeepSeekConfig;

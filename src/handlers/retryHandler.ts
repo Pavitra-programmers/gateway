@@ -1,9 +1,5 @@
 import retry from 'async-retry';
 import { MAX_RETRY_LIMIT_MS, POSSIBLE_RETRY_STATUS_HEADERS } from '../globals';
-import {
-  externalServiceFetch,
-  externalServiceFetchWithNodeFetch,
-} from '../utils/fetch';
 
 async function fetchWithTimeout(
   url: string,
@@ -18,17 +14,13 @@ async function fetchWithTimeout(
     signal: controller.signal,
   };
 
-  const fetcher = (options.headers as any)?.['use-node-fetch']
-    ? externalServiceFetchWithNodeFetch
-    : externalServiceFetch;
-  delete (options as any)?.headers?.['use-node-fetch'];
   let response;
 
   try {
     if (requestHandler) {
       response = await requestHandler();
     } else {
-      response = await fetcher(url, timeoutRequestOptions as any);
+      response = await fetch(url, timeoutRequestOptions);
     }
     clearTimeout(timeoutId);
   } catch (err: any) {
@@ -82,44 +74,37 @@ export const retryRequest = async (
   response: Response;
   attempt: number | undefined;
   createdAt: Date;
-  executionTime: number;
   skip: boolean;
 }> => {
   let lastResponse: Response | undefined;
   let lastAttempt: number | undefined;
   const start = new Date();
-  let skipRetry = false;
+  let retrySkipped = false;
 
   let remainingRetryTimeout = MAX_RETRY_LIMIT_MS;
 
-  const fetcher = (options.headers as any)?.['use-node-fetch']
-    ? externalServiceFetchWithNodeFetch
-    : externalServiceFetch;
-
-  delete (options as any)?.headers?.['use-node-fetch'];
   try {
     await retry(
       async (bail: any, attempt: number, rateLimiter: any) => {
         try {
           let response: Response;
           if (timeout) {
-            response = (await fetchWithTimeout(
+            response = await fetchWithTimeout(
               url,
               options,
               timeout,
               requestHandler
-            )) as any;
+            );
           } else if (requestHandler) {
             response = await requestHandler();
           } else {
-            response = (await fetcher(url, options as any)) as any;
+            response = await fetch(url, options);
           }
           if (statusCodesToRetry.includes(response.status)) {
             const errorObj: any = new Error(await response.text());
             errorObj.status = response.status;
             errorObj.headers = Object.fromEntries(response.headers);
 
-            // handle provider retry wait, if we have retry header.
             if (response.status === 429 && followProviderRetry) {
               // get retry header.
               const retryHeader = POSSIBLE_RETRY_STATUS_HEADERS.find(
@@ -143,14 +128,13 @@ export const retryRequest = async (
               if (retryAfter && !Number.isNaN(retryAfter)) {
                 // break the loop if the retryAfter is greater than the max retry limit
                 if (
-                  retryAfter > MAX_RETRY_LIMIT_MS ||
+                  retryAfter >= MAX_RETRY_LIMIT_MS ||
                   retryAfter > remainingRetryTimeout
                 ) {
-                  skipRetry = true;
+                  retrySkipped = true;
                   rateLimiter._timeouts = [];
                   throw errorObj;
                 }
-
                 remainingRetryTimeout -= retryAfter;
                 // will reset the current backoff timeout(s) to `0`.
                 rateLimiter._timeouts = Array.from({
@@ -166,7 +150,7 @@ export const retryRequest = async (
                 throw errorObj;
               }
             }
-            // follow the retry logic.
+
             throw errorObj;
           } else if (response.status >= 200 && response.status <= 204) {
             // do nothing
@@ -201,12 +185,18 @@ export const retryRequest = async (
       error.cause instanceof Error &&
       error.cause?.name === 'ConnectTimeoutError'
     ) {
+      console.error(
+        'retryRequest ConnectTimeoutError error:',
+        error.cause,
+        error.message
+      );
       // This error comes in case the host address is unreachable. Empty status code used to get returned
       // from here hence no retry logic used to get called.
       lastResponse = new Response(error.message, {
         status: 503,
       });
-    } else if (!error.status) {
+    } else if (!error.status || error instanceof TypeError) {
+      console.error('retryRequest error:', error.cause, error.message);
       // The retry handler will always attach status code to the error object
       lastResponse = new Response(
         `Message: ${error.message} Cause: ${error.cause ?? 'NA'} Name: ${error.name}`,
@@ -221,13 +211,10 @@ export const retryRequest = async (
       });
     }
   }
-  const end = new Date();
-
   return {
     response: lastResponse as Response,
     attempt: lastAttempt,
     createdAt: start,
-    executionTime: end.getTime() - start.getTime(),
-    skip: skipRetry,
+    skip: retrySkipped,
   };
 };

@@ -64,10 +64,6 @@ export const messagesBaseConfig: ProviderConfig = {
     param: 'top_p',
     required: false,
   },
-  output_config: {
-    param: 'output_config',
-    required: false,
-  },
 };
 
 export const getMessagesConfig = ({

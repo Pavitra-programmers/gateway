@@ -1,7 +1,7 @@
-import { logger } from '../apm';
-import { RouterError } from '../errors/RouterError';
-import { tryTargetsRecursively } from './handlerUtils';
-import { constructConfigFromRequestHeaders } from '../utils/request';
+import {
+  constructConfigFromRequestHeaders,
+  tryTargetsRecursively,
+} from './handlerUtils';
 import { Context } from 'hono';
 
 /**
@@ -16,13 +16,13 @@ export async function createTranscriptionHandler(
   c: Context
 ): Promise<Response> {
   try {
-    const request = c.get('requestBodyData');
-    const requestHeaders = c.get('mappedHeaders');
+    let request = await c.req.raw.formData();
+    let requestHeaders = Object.fromEntries(c.req.raw.headers);
     const camelCaseConfig = constructConfigFromRequestHeaders(requestHeaders);
     const tryTargetsResponse = await tryTargetsRecursively(
       c,
       camelCaseConfig ?? {},
-      request.bodyFormData,
+      request,
       requestHeaders,
       'createTranscription',
       'POST',
@@ -31,23 +31,14 @@ export async function createTranscriptionHandler(
 
     return tryTargetsResponse;
   } catch (err: any) {
-    logger.error(`createTranscription error: `, err);
-
-    let statusCode = 500;
-    let errorMessage = 'Something went wrong';
-
-    if (err instanceof RouterError) {
-      statusCode = 400;
-      errorMessage = err.message;
-    }
-
+    console.error('createTranscriptionHandler error: ', err);
     return new Response(
       JSON.stringify({
         status: 'failure',
-        message: errorMessage,
+        message: 'Something went wrong',
       }),
       {
-        status: statusCode,
+        status: 500,
         headers: {
           'content-type': 'application/json',
         },

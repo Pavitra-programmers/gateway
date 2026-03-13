@@ -1,7 +1,7 @@
 import { OPEN_AI } from '../../globals';
 import { EmbedResponse } from '../../types/embedRequestBody';
-import { Params, Message } from '../../types/requestBody';
 import { ResponseItemList } from '../../types/inputList';
+import { Params, Message } from '../../types/requestBody';
 import {
   OpenAIResponse,
   ModelResponseDeleteResponse,
@@ -12,7 +12,7 @@ import {
 } from '../openai/chatComplete';
 import { OpenAICompleteResponse } from '../openai/complete';
 import { OpenAIErrorResponseTransform } from '../openai/utils';
-import { ErrorResponse, ParameterConfig, ProviderConfig } from '../types';
+import { ErrorResponse, ProviderConfig } from '../types';
 import { OpenAICreateModelResponseConfig } from './createModelResponse';
 
 type CustomTransformer<T, U> = (
@@ -30,7 +30,6 @@ type DefaultValues = {
   [key: string]: unknown;
 };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const excludeObjectKeys = (keyList: string[], object: Record<string, any>) => {
   if (keyList) {
     keyList.forEach((excludeKey) => {
@@ -39,26 +38,6 @@ const excludeObjectKeys = (keyList: string[], object: Record<string, any>) => {
       }
     });
   }
-};
-
-export const createModelResponseParams = (
-  exclude: string[],
-  defaultValues: Record<string, string> = {},
-  extra?: ProviderConfig
-): ProviderConfig => {
-  const baseParams: ProviderConfig = {
-    ...OpenAICreateModelResponseConfig,
-  };
-
-  excludeObjectKeys(exclude, baseParams);
-
-  Object.keys(defaultValues).forEach((key) => {
-    if (Object.hasOwn(baseParams, key) && !Array.isArray(baseParams[key])) {
-      (baseParams[key] as ParameterConfig).default = defaultValues[key];
-    }
-  });
-
-  return { ...baseParams, ...(extra ?? {}) };
 };
 
 /**
@@ -90,7 +69,7 @@ export const chatCompleteParams = (
 
   Object.keys(defaultValues ?? {}).forEach((key) => {
     if (Object.hasOwn(baseParams, key) && !Array.isArray(baseParams[key])) {
-      (baseParams[key] as ParameterConfig).default = defaultValues?.[key];
+      (baseParams[key] as any).default = defaultValues?.[key];
     }
   });
 
@@ -258,9 +237,28 @@ export const createSpeechParams = (
   return { ...baseParams, ...(extra ?? {}) };
 };
 
+export const createModelResponseParams = (
+  exclude: string[],
+  defaultValues: Record<string, string> = {},
+  extra?: ProviderConfig
+): ProviderConfig => {
+  const baseParams: ProviderConfig = {
+    ...OpenAICreateModelResponseConfig,
+  };
+
+  excludeObjectKeys(exclude, baseParams);
+
+  // Object.keys(defaultValues).forEach((key) => {
+  //   if (Object.hasOwn(baseParams, key) && !Array.isArray(baseParams[key])) {
+  //     baseParams[key].default = defaultValues[key];
+  //   }
+  // });
+
+  return { ...baseParams, ...(extra ?? {}) };
+};
+
 const EmbedResponseTransformer = <T extends EmbedResponse | ErrorResponse>(
   provider: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   customTransformer?: CustomTransformer<EmbedResponse, T>
 ) => {
   const transformer: (
@@ -286,6 +284,39 @@ const CompleteResponseTransformer = <
 >(
   provider: string,
   customTransformer?: CustomTransformer<OpenAICompleteResponse, T>
+) => {
+  const transformer: (
+    response: T | ErrorResponse,
+    responseStatus: number
+  ) => T | ErrorResponse = (response, responseStatus) => {
+    if (responseStatus !== 200 && 'error' in response) {
+      const errorResponse = OpenAIErrorResponseTransform(
+        response,
+        provider ?? OPEN_AI
+      );
+      if (customTransformer) {
+        return customTransformer(errorResponse, true);
+      }
+    }
+
+    if (customTransformer) {
+      return customTransformer(response as T);
+    }
+
+    Object.defineProperty(response, 'provider', {
+      value: provider,
+      enumerable: true,
+    });
+
+    return response;
+  };
+
+  return transformer;
+};
+
+const CreateSpeechResponseTransformer = <T extends Response | ErrorResponse>(
+  provider: string,
+  customTransformer?: CustomTransformer<Response | ErrorResponse, T>
 ) => {
   const transformer: (
     response: T | ErrorResponse,
@@ -346,39 +377,6 @@ const ChatCompleteResponseTransformer = <
       value: provider,
       enumerable: true,
     });
-    return response;
-  };
-
-  return transformer;
-};
-
-const CreateSpeechResponseTransformer = <T extends Response | ErrorResponse>(
-  provider: string,
-  customTransformer?: CustomTransformer<Response | ErrorResponse, T>
-) => {
-  const transformer: (
-    response: T | ErrorResponse,
-    responseStatus: number
-  ) => T | ErrorResponse = (response, responseStatus) => {
-    if (responseStatus !== 200 && 'error' in response) {
-      const errorResponse = OpenAIErrorResponseTransform(
-        response,
-        provider ?? OPEN_AI
-      );
-      if (customTransformer) {
-        return customTransformer(errorResponse, true);
-      }
-    }
-
-    if (customTransformer) {
-      return customTransformer(response as T);
-    }
-
-    Object.defineProperty(response, 'provider', {
-      value: provider,
-      enumerable: true,
-    });
-
     return response;
   };
 
@@ -553,7 +551,6 @@ export const responseTransformers = <
     createSpeech?: boolean | CustomTransformer<Response | ErrorResponse, W>;
   }
 ) => {
-  // eslint-disable-next-line @typescript-eslint/ban-types
   const transformers: Record<
     'complete' | 'chatComplete' | 'embed' | 'createSpeech',
     Function | null
@@ -586,6 +583,7 @@ export const responseTransformers = <
         : undefined
     );
   }
+
   if (options.createSpeech) {
     transformers.createSpeech = CreateSpeechResponseTransformer<W>(
       provider,
@@ -594,7 +592,6 @@ export const responseTransformers = <
         : undefined
     );
   }
-
   return transformers;
 };
 

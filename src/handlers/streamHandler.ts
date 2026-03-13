@@ -1,4 +1,3 @@
-import { Context } from 'hono';
 import {
   AZURE_OPEN_AI,
   BEDROCK,
@@ -16,7 +15,6 @@ import { OpenAICompleteResponse } from '../providers/openai/complete';
 import { endpointStrings } from '../providers/types';
 import { Params } from '../types/requestBody';
 import { getStreamModeSplitPattern, type SplitPatternType } from '../utils';
-import { logger } from '../apm';
 
 function readUInt32BE(buffer: Uint8Array, offset: number) {
   return (
@@ -245,7 +243,6 @@ export async function handleNonStreamingMode(
   response: Response;
   json: Record<string, any> | null;
   originalResponseBodyJson?: Record<string, any> | null;
-  timeToLastByte?: number | null;
 }> {
   // 408 is thrown whenever a request takes more than request_timeout to respond.
   // In that case, response thrown by gateway is already in OpenAI format.
@@ -262,7 +259,6 @@ export async function handleNonStreamingMode(
   const isJsonParsingRequired = responseTransformer || areSyncHooksAvailable;
   const originalResponseBodyJson: Record<string, any> | null =
     isJsonParsingRequired ? await response.json() : null;
-  const timeToLastByte = Date.now();
   let responseBodyJson = originalResponseBodyJson;
   if (responseTransformer) {
     responseBodyJson = responseTransformer(
@@ -278,7 +274,6 @@ export async function handleNonStreamingMode(
       response: new Response(response.body, response),
       json: null,
       originalResponseBodyJson,
-      timeToLastByte,
     };
   }
 
@@ -287,7 +282,6 @@ export async function handleNonStreamingMode(
     json: responseBodyJson as Record<string, any>,
     // Send original response if transformer exists
     ...(responseTransformer && { originalResponseBodyJson }),
-    timeToLastByte,
   };
 }
 
@@ -304,7 +298,6 @@ export function handleImageResponse(response: Response) {
 }
 
 export function handleStreamingMode(
-  c: Context,
   response: Response,
   proxyProvider: string,
   responseTransformer: Function | undefined,
@@ -346,13 +339,18 @@ export function handleStreamingMode(
         )) {
           await writer.write(encoder.encode(chunk));
         }
-      } catch (err) {
-        logger.error({
-          message: 'error in aws stream transform',
-          error: err,
-        });
+      } catch (error) {
+        console.error('Error during stream processing:', proxyProvider, error);
       } finally {
-        writer.close();
+        try {
+          await writer.close();
+        } catch (closeError) {
+          console.error(
+            'Failed to close the writer:',
+            proxyProvider,
+            closeError
+          );
+        }
       }
     })();
   } else {
@@ -375,13 +373,18 @@ export function handleStreamingMode(
         )) {
           await writer.write(encoder.encode(chunk));
         }
-      } catch (err) {
-        logger.error({
-          message: 'error in stream transform',
-          error: err,
-        });
+      } catch (error) {
+        console.error('Error during stream processing:', proxyProvider, error);
       } finally {
-        writer.close();
+        try {
+          await writer.close();
+        } catch (closeError) {
+          console.error(
+            'Failed to close the writer:',
+            proxyProvider,
+            closeError
+          );
+        }
       }
     })();
   }
@@ -434,7 +437,6 @@ export async function handleJSONToStreamResponse(
           await writer.write(encoder.encode(hookResultChunk));
         }
       }
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         const chunk = generator.next();
         if (chunk.done) {

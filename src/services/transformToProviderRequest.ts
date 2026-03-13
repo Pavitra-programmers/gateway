@@ -1,7 +1,10 @@
 import { GatewayError } from '../errors/GatewayError';
+import { AZURE_OPEN_AI, FIREWORKS_AI } from '../globals';
 import ProviderConfigs from '../providers';
 import { endpointStrings, ProviderConfig } from '../providers/types';
 import { Options, Params } from '../types/requestBody';
+
+// TODO: Refactor this file to use the providerOptions object instead of the provider string
 
 /**
  * Helper function to set a nested property in an object.
@@ -26,7 +29,7 @@ const getValue = (
   configParam: string,
   params: Params,
   paramConfig: any,
-  providerOptions?: Options
+  providerOptions: Options
 ) => {
   let value = params[configParam as keyof typeof params];
 
@@ -72,7 +75,7 @@ const getValue = (
 export const transformUsingProviderConfig = (
   providerConfig: ProviderConfig,
   params: Params,
-  providerOptions?: Options
+  providerOptions: Options
 ) => {
   const transformedRequest: { [key: string]: any } = {};
 
@@ -108,7 +111,6 @@ export const transformUsingProviderConfig = (
         paramConfig.required &&
         paramConfig.default !== undefined
       ) {
-        // if default is a function, call it
         let value;
         if (typeof paramConfig.default === 'function') {
           value = paramConfig.default(params, providerOptions);
@@ -147,11 +149,7 @@ const transformToProviderRequestJSON = (
   // Get the configuration for the specified provider
   let providerConfig = ProviderConfigs[provider];
   if (providerConfig.getConfig) {
-    providerConfig = providerConfig.getConfig({
-      params,
-      fn: fn as endpointStrings,
-      providerOptions,
-    })[fn];
+    providerConfig = providerConfig.getConfig({ params, providerOptions })[fn];
   } else {
     providerConfig = providerConfig[fn];
   }
@@ -167,15 +165,11 @@ const transformToProviderRequestFormData = (
   provider: string,
   params: Params,
   fn: string,
-  providerOptions?: Options
+  providerOptions: Options
 ): FormData => {
   let providerConfig = ProviderConfigs[provider];
   if (providerConfig.getConfig) {
-    providerConfig = providerConfig.getConfig({
-      params,
-      fn: fn as endpointStrings,
-      providerOptions,
-    })[fn];
+    providerConfig = providerConfig.getConfig({ params, providerOptions })[fn];
   } else {
     providerConfig = providerConfig[fn];
   }
@@ -217,18 +211,15 @@ const transformToProviderRequestBody = (
   provider: string,
   requestBody: ReadableStream,
   requestHeaders: Record<string, string>,
-  fn: endpointStrings
+  providerOptions: Options,
+  fn: string
 ) => {
-  if (ProviderConfigs[provider].getConfig) {
-    return ProviderConfigs[provider]
-      .getConfig?.({ params: {}, fn })
-      ?.requestTransforms?.[fn]?.(requestBody, requestHeaders);
-  } else {
-    return ProviderConfigs[provider].requestTransforms?.[fn]?.(
-      requestBody,
-      requestHeaders
-    );
+  let providerConfig = ProviderConfigs[provider];
+  if (providerConfig.getConfig) {
+    providerConfig = providerConfig.getConfig({ params: {}, providerOptions });
   }
+
+  return providerConfig.requestTransforms[fn](requestBody, requestHeaders);
 };
 
 /**
@@ -254,25 +245,25 @@ export const transformToProviderRequest = (
       provider,
       requestBody as ReadableStream,
       requestHeaders,
+      providerOptions,
       fn
     );
   }
 
-  const containsRequestTransform =
-    ProviderConfigs[provider].requestTransforms?.[fn] ||
-    ProviderConfigs[provider].getConfig?.({ params, fn, providerOptions })
-      ?.requestTransforms?.[fn];
-
-  if (containsRequestTransform) {
+  if (
+    fn === 'createFinetune' &&
+    [AZURE_OPEN_AI, FIREWORKS_AI].includes(provider)
+  ) {
     return transformToProviderRequestBody(
       provider,
       requestBody as ReadableStream,
       requestHeaders,
+      providerOptions,
       fn
     );
   }
 
-  if (requestBody instanceof FormData || params instanceof ArrayBuffer)
+  if (requestBody instanceof FormData || requestBody instanceof ArrayBuffer)
     return requestBody;
 
   if (fn === 'proxy') {

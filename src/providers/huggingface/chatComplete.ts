@@ -1,5 +1,6 @@
 import { HUGGING_FACE } from '../../globals';
-import { Params, Message } from '../../types/requestBody';
+import { Params } from '../../types/requestBody';
+import { OpenAIErrorResponseTransform } from '../openai/utils';
 import {
   ChatCompletionResponse,
   ErrorResponse,
@@ -19,7 +20,7 @@ export const HuggingfaceChatCompleteConfig: ProviderConfig = {
     param: 'messages',
     default: '',
     transform: (params: Params) => {
-      return params.messages?.map((message: Message) => {
+      return params.messages?.map((message) => {
         if (message.role === 'developer') return { ...message, role: 'system' };
         return message;
       });

@@ -1,7 +1,8 @@
 import { Context } from 'hono';
-import { tryTargetsRecursively } from './handlerUtils';
-import { constructConfigFromRequestHeaders } from '../utils/request';
-import { logger } from '../apm';
+import {
+  constructConfigFromRequestHeaders,
+  tryTargetsRecursively,
+} from './handlerUtils';
 
 const getEndpointString = (c: Context) => {
   const jobId = c.req.param('jobId');
@@ -32,9 +33,9 @@ async function finetuneHandler(c: Context) {
   const endpoint = getEndpointString(c);
   try {
     const method = c.req.method;
-    const requestHeaders = c.get('mappedHeaders');
+    const requestHeaders = Object.fromEntries(c.req.raw.headers);
     const request = BODY_SUPPORTED_ENDPOINTS.includes(endpoint)
-      ? c.get('requestBodyData').bodyJSON
+      ? await c.req.json()
       : {};
     const camelCaseConfig = constructConfigFromRequestHeaders(requestHeaders);
     const tryTargetsResponse = await tryTargetsRecursively(
@@ -49,7 +50,7 @@ async function finetuneHandler(c: Context) {
 
     return tryTargetsResponse;
   } catch (err: any) {
-    logger.error(`${endpoint} error:`, err);
+    console.error('finetuneHandler error: ', err);
     return new Response(
       JSON.stringify({
         status: 'failure',

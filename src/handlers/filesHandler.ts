@@ -1,8 +1,9 @@
 import { Context } from 'hono';
-import { tryTargetsRecursively } from './handlerUtils';
-import { constructConfigFromRequestHeaders } from '../utils/request';
+import {
+  constructConfigFromRequestHeaders,
+  tryTargetsRecursively,
+} from './handlerUtils';
 import { endpointStrings } from '../providers/types';
-import { logger } from '../apm';
 
 function filesHandler(
   endpoint: endpointStrings,
@@ -10,10 +11,9 @@ function filesHandler(
 ) {
   async function handler(c: Context): Promise<Response> {
     try {
-      const requestHeaders = c.get('mappedHeaders');
+      const requestHeaders = Object.fromEntries(c.req.raw.headers);
       const camelCaseConfig = constructConfigFromRequestHeaders(requestHeaders);
       let body = {};
-
       if (c.req.raw.body instanceof ReadableStream) {
         body = c.req.raw.body;
       }
@@ -29,7 +29,7 @@ function filesHandler(
 
       return tryTargetsResponse;
     } catch (err: any) {
-      logger.error(`${endpoint} error:`, err);
+      console.error('filesHandler error: ', err);
       return new Response(
         JSON.stringify({
           status: 'failure',

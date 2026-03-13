@@ -1,7 +1,7 @@
 import {
   BEDROCK,
-  imagesMimeTypes,
   fileExtensionMimeTypeMap,
+  imagesMimeTypes,
   videoMimeTypes,
 } from '../../globals';
 import {
@@ -10,7 +10,6 @@ import {
   ToolCall,
   SYSTEM_MESSAGE_ROLES,
   ContentType,
-  Options,
   ToolChoiceObject,
 } from '../../types/requestBody';
 import {
@@ -64,14 +63,14 @@ export interface BedrockChatCompletionsParams extends Params {
 }
 
 export interface BedrockConverseAnthropicChatCompletionsParams
-  extends BedrockChatCompletionsParams {
+  extends Omit<BedrockChatCompletionsParams, 'anthropic_beta'> {
   anthropic_version?: string;
   user?: string;
   thinking?: {
     type: string;
     budget_tokens: number;
   };
-  anthropic_beta?: string[];
+  anthropic_beta?: string | string[];
 }
 
 export interface BedrockConverseCohereChatCompletionsParams
@@ -90,8 +89,6 @@ export interface BedrockConverseAI21ChatCompletionsParams
   presencePenalty?: number;
   countPenalty?: number;
 }
-
-// const CACHE_SUPPORTED_ROLES = ['user', 'assistant', 'system'];
 
 const getMessageTextContentArray = (
   message: Message
@@ -279,22 +276,11 @@ const getMessageContent = (message: Message) => {
     out.push({
       toolUse: {
         name: toolCall.function.name,
-        input:
-          toolCall.function.arguments?.length > 0
-            ? JSON.parse(toolCall.function.arguments)
-            : {},
+        input: JSON.parse(toolCall.function.arguments),
         toolUseId: toolCall.id,
       },
     });
   });
-
-  // Bedrock requires a text block when documents are present
-  const hasDocument = out.some((item) => 'document' in item);
-  const hasText = out.some((item) => 'text' in item);
-  if (hasDocument && !hasText) {
-    out.unshift({ text: ' ' });
-  }
-
   return out;
 };
 
@@ -309,10 +295,9 @@ export const BedrockConverseChatCompleteConfig: ProviderConfig = {
         const transformedMessages = params.messages
           .filter((msg) => !SYSTEM_MESSAGE_ROLES.includes(msg.role))
           .map((msg) => {
-            const content = getMessageContent(msg);
             return {
               role: msg.role === 'assistant' ? 'assistant' : 'user',
-              content: content,
+              content: getMessageContent(msg),
             };
           });
         let prevRole = '';
@@ -346,10 +331,8 @@ export const BedrockConverseChatCompleteConfig: ProviderConfig = {
             acc: Array<{ text: string } | { cachePoint: { type: string } }>,
             msg
           ) => {
-            if (SYSTEM_MESSAGE_ROLES.includes(msg.role)) {
-              const content = getMessageTextContentArray(msg);
-              return acc.concat(...content);
-            }
+            if (SYSTEM_MESSAGE_ROLES.includes(msg.role))
+              return acc.concat(...getMessageTextContentArray(msg));
             return acc;
           },
           []
@@ -735,75 +718,38 @@ export const BedrockConverseAnthropicChatCompleteConfig: ProviderConfig = {
   ...BedrockConverseChatCompleteConfig,
   additionalModelRequestFields: {
     param: 'additionalModelRequestFields',
-    transform: (
-      params: BedrockConverseAnthropicChatCompletionsParams,
-      providerOptions?: Options
-    ) =>
-      transformAnthropicAdditionalModelRequestFields(params, providerOptions),
+    transform: (params: BedrockConverseAnthropicChatCompletionsParams) =>
+      transformAnthropicAdditionalModelRequestFields(params),
   },
   additional_model_request_fields: {
     param: 'additionalModelRequestFields',
-    transform: (
-      params: BedrockConverseAnthropicChatCompletionsParams,
-      providerOptions?: Options
-    ) =>
-      transformAnthropicAdditionalModelRequestFields(params, providerOptions),
+    transform: (params: BedrockConverseAnthropicChatCompletionsParams) =>
+      transformAnthropicAdditionalModelRequestFields(params),
   },
   top_k: {
     param: 'additionalModelRequestFields',
-    transform: (
-      params: BedrockConverseAnthropicChatCompletionsParams,
-      providerOptions?: Options
-    ) =>
-      transformAnthropicAdditionalModelRequestFields(params, providerOptions),
+    transform: (params: BedrockConverseAnthropicChatCompletionsParams) =>
+      transformAnthropicAdditionalModelRequestFields(params),
   },
   anthropic_version: {
     param: 'additionalModelRequestFields',
-    transform: (
-      params: BedrockConverseAnthropicChatCompletionsParams,
-      providerOptions?: Options
-    ) =>
-      transformAnthropicAdditionalModelRequestFields(params, providerOptions),
+    transform: (params: BedrockConverseAnthropicChatCompletionsParams) =>
+      transformAnthropicAdditionalModelRequestFields(params),
   },
   user: {
     param: 'additionalModelRequestFields',
-    transform: (
-      params: BedrockConverseAnthropicChatCompletionsParams,
-      providerOptions?: Options
-    ) =>
-      transformAnthropicAdditionalModelRequestFields(params, providerOptions),
+    transform: (params: BedrockConverseAnthropicChatCompletionsParams) =>
+      transformAnthropicAdditionalModelRequestFields(params),
   },
   thinking: {
     param: 'additionalModelRequestFields',
-    transform: (
-      params: BedrockConverseAnthropicChatCompletionsParams,
-      providerOptions?: Options
-    ) =>
-      transformAnthropicAdditionalModelRequestFields(params, providerOptions),
+    transform: (params: BedrockConverseAnthropicChatCompletionsParams) =>
+      transformAnthropicAdditionalModelRequestFields(params),
   },
   anthropic_beta: {
     param: 'additionalModelRequestFields',
-    transform: (
-      params: BedrockConverseAnthropicChatCompletionsParams,
-      providerOptions?: Options
-    ) =>
-      transformAnthropicAdditionalModelRequestFields(params, providerOptions),
-  },
-  reasoning_effort: {
-    param: 'additionalModelRequestFields',
-    transform: (
-      params: BedrockConverseAnthropicChatCompletionsParams,
-      providerOptions?: Options
-    ) =>
-      transformAnthropicAdditionalModelRequestFields(params, providerOptions),
-  },
-  response_format: {
-    param: 'additionalModelRequestFields',
-    transform: (
-      params: BedrockConverseAnthropicChatCompletionsParams,
-      providerOptions?: Options
-    ) =>
-      transformAnthropicAdditionalModelRequestFields(params, providerOptions),
+    transform: (params: BedrockConverseAnthropicChatCompletionsParams) =>
+      transformAnthropicAdditionalModelRequestFields(params),
   },
 };
 

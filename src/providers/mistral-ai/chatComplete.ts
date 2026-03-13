@@ -159,7 +159,9 @@ export const GetMistralAIChatCompleteResponseTransform = (provider: string) => {
     response: MistralAIChatCompleteResponse | MistralAIErrorResponse,
     responseStatus: number,
     _responseHeaders: Headers,
-    strictOpenAiCompliance: boolean
+    strictOpenAiCompliance: boolean,
+    _gatewayRequestUrl: string,
+    _gatewayRequest: Params
   ): ChatCompletionResponse | ErrorResponse => {
     if ('message' in response && responseStatus !== 200) {
       return generateErrorResponse(
@@ -211,7 +213,8 @@ export const GetMistralAIChatCompleteStreamChunkTransform = (
     responseChunk: string,
     fallbackId: string,
     _streamState: any,
-    strictOpenAiCompliance: boolean
+    strictOpenAiCompliance: boolean,
+    _gatewayRequest: Params
   ) => {
     let chunk = responseChunk.trim();
     chunk = chunk.replace(/^data: /, '');

@@ -1,6 +1,5 @@
 import { GOOGLE_VERTEX_AI } from '../../globals';
 import { MessagesResponse } from '../../types/messagesResponse';
-import { Options } from '../../types/requestBody';
 import { getMessagesConfig } from '../anthropic-base/messages';
 import { AnthropicErrorResponse } from '../anthropic/types';
 import { AnthropicErrorResponseTransform } from '../anthropic/utils';
@@ -13,13 +12,6 @@ export const VertexAnthropicMessagesConfig = getMessagesConfig({
       param: 'anthropic_version',
       required: true,
       default: 'vertex-2023-10-16',
-      transform: (params: Params, providerOptions?: Options) => {
-        return (
-          providerOptions?.anthropicVersion ||
-          params['anthropic_version'] ||
-          'vertex-2023-10-16'
-        );
-      },
     },
   },
   exclude: ['model'],

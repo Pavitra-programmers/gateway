@@ -1,11 +1,11 @@
 import { Context } from 'hono';
 import { ProviderAPIConfig } from '../providers/types';
 import { Options } from '../types/requestBody';
-import { RealTimeLLMEventParser } from '../services/realtimeLLMEventParser';
+import { RealtimeLlmEventParser } from '../services/realtimeLlmEventParser';
 
 export const addListeners = (
   outgoingWebSocket: WebSocket,
-  eventParser: RealTimeLLMEventParser,
+  eventParser: RealtimeLlmEventParser,
   server: WebSocket,
   c: Context,
   sessionOptions: any
@@ -20,7 +20,7 @@ export const addListeners = (
     }
   });
 
-  const errorListener = (event: Event) => {
+  const errorListener = (event: ErrorEvent) => {
     console.error('outgoingWebSocket error: ', event);
     server?.close();
   };

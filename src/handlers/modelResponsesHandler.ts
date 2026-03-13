@@ -1,43 +1,43 @@
 import { Context } from 'hono';
-import { tryTargetsRecursively } from './handlerUtils';
-import { constructConfigFromRequestHeaders } from '../utils/request';
+import {
+  constructConfigFromRequestHeaders,
+  tryTargetsRecursively,
+} from './handlerUtils';
 import { endpointStrings } from '../providers/types';
-import { logger } from '../apm';
 
-/**
- * Handler for the Responses API endpoints (/v1/responses)
- *
- * This handler always passes through to tryTargetsRecursively with the
- * original endpoint. The per-provider adapter decision (native vs chatComplete
- * translation) is made inside tryPost where the exact provider is known,
- * rather than pre-deciding at the handler level via recursive config walking.
- */
 function modelResponsesHandler(
   endpoint: endpointStrings,
   method: 'POST' | 'GET' | 'DELETE'
 ) {
   async function handler(c: Context): Promise<Response> {
     try {
-      const request = c.get('requestBodyData');
-      const requestHeaders = c.get('mappedHeaders');
+      let requestHeaders = Object.fromEntries(c.req.raw.headers);
+      let request = method === 'POST' ? await c.req.json() : {};
       const camelCaseConfig = constructConfigFromRequestHeaders(requestHeaders);
-
-      return tryTargetsRecursively(
+      const tryTargetsResponse = await tryTargetsRecursively(
         c,
         camelCaseConfig ?? {},
-        method === 'POST' ? request.bodyJSON : {},
+        request,
         requestHeaders,
         endpoint,
         method,
         'config'
       );
+
+      return tryTargetsResponse;
     } catch (err: any) {
-      logger.error(`${endpoint} error:`, err);
+      console.error('modelResponsesHandler error: ', err);
       return new Response(
         JSON.stringify({
-          error: { message: 'Internal error', type: 'server_error' },
+          status: 'failure',
+          message: 'Something went wrong',
         }),
-        { status: 500, headers: { 'content-type': 'application/json' } }
+        {
+          status: 500,
+          headers: {
+            'content-type': 'application/json',
+          },
+        }
       );
     }
   }

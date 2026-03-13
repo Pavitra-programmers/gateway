@@ -1,327 +1,331 @@
 /**
- * @file src/handlers/mcpHandler.ts
- * MCP (Model Context Protocol) request handler
- *
- * Performance-optimized handler functions for MCP requests
- *
- * NOTE: Session management removed - sessions are now ephemeral per request.
- * NOTE: SSE downstream support removed - gateway only accepts HTTP Streamable.
- * NOTE: Upstream connections are pooled for low-latency repeat requests.
+ * MCP Gateway Request Handlers
+ * Handles incoming MCP requests from clients
  */
 
-import { Context } from 'hono';
-import { RESPONSE_ALREADY_SENT } from '@hono/node-server/utils/response';
-
-import { ServerConfig } from '../types/mcp';
-import { MCPSession, TransportType } from '../services/mcpSession';
-import { createLogger } from '../../shared/utils/logger';
-import { ControlPlane } from '../middleware/controlPlane';
-import { revokeAllClientTokens } from '../utils/oauthTokenRevocation';
-import { getConnectionPool } from '../services/upstreamConnectionPool';
+import type { Context } from 'hono';
+import { HTTPException } from 'hono/http-exception';
+import { logger } from '../utils/logger.js';
+import { getMCPContext } from '../middleware/hydrateContext.js';
+import { getSessionManager, MCPSession } from '../services/mcpSession.js';
 import {
-  getAllHeadersFromRequest,
-  extractHeadersToForward,
-} from '../utils/headers';
+  MCP_HEADERS,
+  CONTENT_TYPES,
+  JSONRPC_ERROR_CODES,
+  ERROR_MESSAGES,
+} from '../constants/index.js';
+import type {
+  JSONRPCRequest,
+  JSONRPCResponse,
+  TransportType,
+} from '../types/index.js';
 
-const logger = createLogger('MCP-Handler');
-
-type Env = {
-  Variables: {
-    serverConfig: ServerConfig;
-    session?: MCPSession;
-    tokenInfo?: any; // Token introspection response
-    isAuthenticated?: boolean;
-    controlPlane?: ControlPlane;
-  };
-  Bindings: {
-    ALBUS_BASEPATH?: string;
-  };
-};
+const log = logger.child('mcpHandler');
 
 /**
- * Error response factory
+ * Parse JSON-RPC request from body
  */
-const ErrorResponse = {
-  create(code: number, message: string, id: any = null, data?: any) {
-    return {
-      jsonrpc: '2.0',
-      error: { code, message, ...(data && { data }) },
-      id,
-    };
-  },
-
-  serverConfigNotFound: (id?: any) =>
-    ErrorResponse.create(-32001, 'Server config not found', id),
-
-  sessionNotFound: (id?: any) =>
-    ErrorResponse.create(-32001, 'Session not found', id),
-
-  invalidRequest: (id?: any) =>
-    ErrorResponse.create(-32600, 'Invalid Request', id),
-
-  sessionNotInitialized: (id?: any) =>
-    ErrorResponse.create(-32000, 'Session not properly initialized', id),
-
-  sessionRestoreFailed: (id?: any) =>
-    ErrorResponse.create(
-      -32000,
-      'Failed to restore session. Please reinitialize.',
-      id
-    ),
-
-  sessionExpired: (id?: any) =>
-    ErrorResponse.create(-32001, 'Session expired', id),
-
-  missingSessionId: (id?: any) =>
-    ErrorResponse.create(-32000, 'Session ID required in query parameter', id),
-
-  authorizationRequired(
-    id: any,
-    error: { workspaceId: string; serverId: string; authorizationUrl: string }
-  ) {
-    return ErrorResponse.create(
-      -32000,
-      `Authorization required for ${error.workspaceId}/${error.serverId}. Complete it here: ${error.authorizationUrl}`,
-      id,
-      { type: 'oauth_required', authorizationUrl: error.authorizationUrl }
-    );
-  },
-};
-
-async function purgeOauthTokens(
-  tokenInfo: any,
-  controlPlane?: ControlPlane | null
-) {
-  if (!tokenInfo?.client_id) {
-    logger.debug('No client_id in tokenInfo, skipping OAuth token purge');
-    return;
+async function parseJSONRPCRequest(c: Context): Promise<JSONRPCRequest | JSONRPCRequest[]> {
+  try {
+    const body = await c.req.json();
+    return body;
+  } catch (error) {
+    throw new HTTPException(400, { message: 'Invalid JSON in request body' });
   }
-
-  // Use the utility function to revoke all tokens for this client
-  await revokeAllClientTokens(tokenInfo, controlPlane);
 }
 
 /**
- * Extract token expiration from token info
- * Returns milliseconds since epoch, or undefined if not available
+ * Validate JSON-RPC request structure
  */
-function getTokenExpiresAt(tokenInfo?: any): number | undefined {
-  if (!tokenInfo) return undefined;
-
-  // JWT exp claim (seconds since epoch)
-  if (tokenInfo.exp) {
-    return tokenInfo.exp * 1000;
+function validateJSONRPCRequest(request: unknown): request is JSONRPCRequest {
+  if (!request || typeof request !== 'object') {
+    return false;
   }
 
-  // OAuth expires_in (seconds from now)
-  if (tokenInfo.expires_in) {
-    return Date.now() + tokenInfo.expires_in * 1000;
-  }
-
-  // Direct expires_at (milliseconds)
-  if (tokenInfo.expires_at) {
-    return tokenInfo.expires_at;
-  }
-
-  return undefined;
-}
-
-/**
- * Create new session with pooled upstream connection
- *
- * Uses the connection pool to get or create an upstream connection,
- * significantly reducing latency for repeat requests to the same server.
- *
- * SECURITY NOTES:
- * - Anonymous users are NOT pooled (prevents state leakage)
- * - Token expiry is checked before reusing connections
- * - Per-server pooling can be disabled via config.disablePooling
- */
-async function createSession(
-  config: ServerConfig,
-  tokenInfo?: any,
-  context?: Context<Env>,
-  transportType?: TransportType
-): Promise<MCPSession> {
-  const pool = getConnectionPool();
-
-  // Determine userId for connection pooling based on auth type
-  let userId = '';
-  if (tokenInfo?.token_type === 'api_key') {
-    // API key auth: use API key ID (sub) for per-key connection pooling
-    userId = tokenInfo.sub || '';
-  } else if (tokenInfo) {
-    // OAuth auth: use username from token introspection
-    userId = tokenInfo.username || tokenInfo.user_id || '';
-  }
-  const controlPlane = context?.get('controlPlane');
-
-  // Get token expiration for pool validation
-  const tokenExpiresAt = getTokenExpiresAt(tokenInfo);
-
-  // Get incoming headers for forwarding (filtered by allowlist)
-  let incomingHeaders: Record<string, string> | undefined;
-  if (config.forwardHeaders && context) {
-    try {
-      const allHeaders = getAllHeadersFromRequest(context.req);
-      incomingHeaders = extractHeadersToForward(
-        allHeaders,
-        config.forwardHeaders
-      );
-    } catch (error) {
-      logger.warn('Failed to get incoming request headers', error);
-    }
-  }
-
-  // Get pooled upstream connection (with token expiry check)
-  const { upstream, reused, poolKey } = await pool.getConnection(
-    config,
-    userId,
-    controlPlane,
-    incomingHeaders,
-    tokenExpiresAt,
-    tokenInfo
+  const req = request as Record<string, unknown>;
+  return (
+    req.jsonrpc === '2.0' &&
+    typeof req.method === 'string' &&
+    req.method.length > 0
   );
+}
 
-  if (reused) {
-    logger.debug(`Using pooled connection for ${config.serverId}`);
-    // Update dynamic headers on reused connections so fresh headers
-    // (trace IDs, refreshed tokens, etc.) are used for this request
-    if (incomingHeaders) {
-      upstream.updateDynamicHeaders(incomingHeaders);
-    }
-  } else {
-    logger.debug(
-      poolKey
-        ? `Created new pooled connection for ${config.serverId}`
-        : `Created non-pooled connection for ${config.serverId} (anonymous or pooling disabled)`
-    );
-  }
+/**
+ * Create error response
+ */
+function createErrorResponse(
+  id: string | number | undefined,
+  code: number,
+  message: string,
+  data?: unknown
+): JSONRPCResponse {
+  return {
+    jsonrpc: '2.0',
+    id,
+    error: { code, message, data },
+  };
+}
 
-  // Create session with the upstream connection
-  const session = new MCPSession({
-    config,
-    gatewayToken: tokenInfo,
-    context,
-    upstream,
-    poolKey,
-    upstreamSessionId: (upstream.transport as any)?.sessionId,
+/**
+ * Get or create session for request
+ */
+async function getOrCreateSession(c: Context): Promise<MCPSession> {
+  const mcpContext = getMCPContext(c);
+  const sessionManager = getSessionManager();
+
+  // Check for existing session ID in header
+  const existingSessionId = c.req.header(MCP_HEADERS.SESSION_ID);
+
+  const session = await sessionManager.getOrCreateSession(existingSessionId, {
+    serverUrl: mcpContext.serverUrl,
+    apiKey: mcpContext.apiKey,
+    serverConfig: mcpContext.serverConfig,
+    tokens: mcpContext.tokens,
+    toolkitConfig: mcpContext.toolkitConfig,
+    clientTransportType: mcpContext.clientTransportType,
   });
 
-  if (transportType) {
-    try {
-      await session.initializeOrRestore(transportType);
-      logger.debug(`Session ${session.id} initialized with ${transportType}`);
-    } catch (error) {
-      const controlPlane = context?.get('controlPlane');
-      await purgeOauthTokens(tokenInfo, controlPlane);
-
-      // Mark upstream as unhealthy if connection failed
-      session.markUpstreamUnhealthy();
-
-      logger.error(
-        `Failed to initialize session (createSession) ${session.id}`,
-        error
-      );
-      throw error;
-    }
+  // Initialize if new
+  if (session.getState() === ('new' as any)) {
+    await session.initialize();
   }
 
-  // NOTE: Session storage removed - sessions are ephemeral
-  // NOTE: Upstream connection stays in pool for reuse (if pooled)
   return session;
 }
 
 /**
- * Handle initialization request
- * - If session is undefined, a new MCPSession is created with the server config and gateway token
- * - `session.initializeOrRestore` is then called to initialize or restore the session
- * - If initialize fails, the session is closed and the error is re-thrown
+ * Handle SSE connection request (GET)
  */
-export async function handleClientRequest(
-  c: Context<Env>,
-  session: MCPSession | undefined
-) {
-  const { serverConfig, tokenInfo } = c.var;
-  const { workspaceId, serverId } = serverConfig;
+export async function handleSSERequest(c: Context): Promise<Response> {
+  const mcpContext = getMCPContext(c);
+  log.info('SSE connection request', {
+    serverUrl: mcpContext.serverUrl,
+  });
 
   try {
-    if (!session) {
-      logger.debug(`Creating new session for: ${workspaceId}/${serverId}`);
-      session = await createSession(serverConfig, tokenInfo, c, 'http');
-    }
-
-    await session.initializeOrRestore('http');
-    session.handleRequest();
-    return RESPONSE_ALREADY_SENT;
-  } catch (error: any) {
-    const bodyId = ((await c.req.json()) as any)?.id;
-
-    // Clean up session if it was created
-    if (session) {
-      // NOTE: Using session.close() instead of deleteSession() - sessions are ephemeral
-      await session.close();
-    }
-
-    // Check if this is an OAuth authorization error
-    if (error.authorizationUrl && error.serverId) {
-      const controlPlane = c.get('controlPlane');
-      await purgeOauthTokens(tokenInfo, controlPlane);
-      return c.json(ErrorResponse.authorizationRequired(bodyId, error), 401);
-    }
-
-    // Log with session ID if available
-    const sessionId = session?.id || 'no-session';
-    logger.error(
-      `Failed to initialize session (handleClientRequest) ${sessionId}`,
-      error
-    );
-    return c.json(ErrorResponse.sessionRestoreFailed(bodyId), 500);
+    const session = await getOrCreateSession(c);
+    return session.createSSEResponse();
+  } catch (error) {
+    log.error('Failed to establish SSE connection', { error });
+    throw new HTTPException(500, {
+      message: error instanceof Error ? error.message : 'Failed to establish connection',
+    });
   }
 }
 
 /**
- * Handle GET request for established session
+ * Handle HTTP request (POST)
  */
-export async function handleEstablishedSessionGET(
-  c: Context<Env>,
-  session: MCPSession
-): Promise<any> {
-  // Ensure session is active or can be restored
+export async function handleHTTPRequest(c: Context): Promise<Response> {
+  const mcpContext = getMCPContext(c);
+
+  log.debug('HTTP request', {
+    serverUrl: mcpContext.serverUrl,
+  });
+
+  // Parse request body
+  let body: JSONRPCRequest | JSONRPCRequest[];
   try {
-    await session.initializeOrRestore();
-    logger.debug(`Session ${session.id} ready`);
-  } catch (error: any) {
-    logger.error(`Failed to prepare session ${session.id}`, error);
-    await session.close();
-    if (error.needsAuthorization) {
-      return c.json(ErrorResponse.authorizationRequired(null, error), 401);
-    }
-    return c.json(ErrorResponse.sessionRestoreFailed(), 500);
+    body = await parseJSONRPCRequest(c);
+  } catch (error) {
+    return c.json(
+      createErrorResponse(undefined, JSONRPC_ERROR_CODES.PARSE_ERROR, 'Parse error'),
+      400
+    );
   }
 
-  // NOTE: SSE transport removed - only HTTP Streamable supported
-  await session.handleRequest();
-  return RESPONSE_ALREADY_SENT;
+  // Handle batch requests
+  if (Array.isArray(body)) {
+    return handleBatchRequest(c, body);
+  }
+
+  // Validate request
+  if (!validateJSONRPCRequest(body)) {
+    return c.json(
+      createErrorResponse(
+        (body as any)?.id,
+        JSONRPC_ERROR_CODES.INVALID_REQUEST,
+        'Invalid Request'
+      ),
+      400
+    );
+  }
+
+  // Get or create session
+  let session: MCPSession;
+  try {
+    session = await getOrCreateSession(c);
+  } catch (error) {
+    return c.json(
+      createErrorResponse(
+        body.id,
+        JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+        error instanceof Error ? error.message : 'Failed to create session'
+      ),
+      500
+    );
+  }
+
+  // Handle request
+  try {
+    const response = await session.handleClientRequest(body);
+
+    // Add session ID to response headers
+    return new Response(JSON.stringify(response), {
+      headers: {
+        'Content-Type': CONTENT_TYPES.JSON,
+        [MCP_HEADERS.SESSION_ID]: session.sessionId,
+      },
+    });
+  } catch (error) {
+    log.error('Failed to handle request', { error, method: body.method });
+    return c.json(
+      createErrorResponse(
+        body.id,
+        JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+        error instanceof Error ? error.message : 'Internal error'
+      ),
+      500
+    );
+  }
+}
+
+/**
+ * Handle batch request
+ */
+async function handleBatchRequest(
+  c: Context,
+  requests: JSONRPCRequest[]
+): Promise<Response> {
+  if (requests.length === 0) {
+    return c.json(
+      createErrorResponse(undefined, JSONRPC_ERROR_CODES.INVALID_REQUEST, 'Empty batch'),
+      400
+    );
+  }
+
+  // Get or create session
+  let session: MCPSession;
+  try {
+    session = await getOrCreateSession(c);
+  } catch (error) {
+    return c.json(
+      requests.map((req) =>
+        createErrorResponse(
+          (req as any)?.id,
+          JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+          'Failed to create session'
+        )
+      ),
+      500
+    );
+  }
+
+  // Process each request
+  const responses: JSONRPCResponse[] = [];
+  for (const request of requests) {
+    if (!validateJSONRPCRequest(request)) {
+      responses.push(
+        createErrorResponse(
+          (request as any)?.id,
+          JSONRPC_ERROR_CODES.INVALID_REQUEST,
+          'Invalid Request'
+        )
+      );
+      continue;
+    }
+
+    try {
+      const response = await session.handleClientRequest(request);
+      responses.push(response);
+    } catch (error) {
+      responses.push(
+        createErrorResponse(
+          request.id,
+          JSONRPC_ERROR_CODES.INTERNAL_ERROR,
+          error instanceof Error ? error.message : 'Internal error'
+        )
+      );
+    }
+  }
+
+  return new Response(JSON.stringify(responses), {
+    headers: {
+      'Content-Type': CONTENT_TYPES.JSON,
+      [MCP_HEADERS.SESSION_ID]: session.sessionId,
+    },
+  });
 }
 
 /**
  * Main MCP request handler
- * This is the optimized entry point that delegates to specific handlers
+ * Routes to SSE or HTTP based on request method and headers
  */
-export async function handleMCPRequest(c: Context<Env>) {
-  const { serverConfig } = c.var;
-  if (!serverConfig) return c.json(ErrorResponse.serverConfigNotFound(), 500);
+export async function handleMCPRequest(c: Context): Promise<Response> {
+  const method = c.req.method;
+  const accept = c.req.header('accept') || '';
 
-  let session: MCPSession | undefined = c.var.session;
-  let method = c.req.method;
+  // GET requests establish SSE connections
+  if (method === 'GET') {
+    // Check if client wants SSE
+    if (accept.includes(CONTENT_TYPES.SSE)) {
+      return handleSSERequest(c);
+    }
 
-  // Handle GET requests for established sessions
-  if (method === 'GET' && session) {
-    return handleEstablishedSessionGET(c, session);
+    // Otherwise, treat as HTTP request (for tools/list etc.)
+    return handleHTTPRequest(c);
   }
 
-  return handleClientRequest(c, session);
+  // POST requests are HTTP JSON-RPC
+  if (method === 'POST') {
+    return handleHTTPRequest(c);
+  }
+
+  // Unsupported method
+  throw new HTTPException(405, { message: 'Method not allowed' });
 }
 
-// NOTE: handleSSERequest and handleSSEMessages removed - SSE downstream not supported
+/**
+ * Health check handler
+ */
+export function handleHealthCheck(c: Context): Response {
+  const sessionManager = getSessionManager();
+  return c.json({
+    status: 'ok',
+    sessions: sessionManager.getSessionCount(),
+  });
+}
+
+/**
+ * Session info handler (for debugging/admin)
+ */
+export async function handleSessionInfo(c: Context): Promise<Response> {
+  const sessionId = c.req.param('sessionId');
+  if (!sessionId) {
+    throw new HTTPException(400, { message: 'Session ID required' });
+  }
+
+  const sessionManager = getSessionManager();
+  const session = sessionManager.getSession(sessionId);
+
+  if (!session) {
+    throw new HTTPException(404, { message: ERROR_MESSAGES.SESSION_NOT_FOUND });
+  }
+
+  return c.json(session.getInfo());
+}
+
+/**
+ * Close session handler
+ */
+export async function handleCloseSession(c: Context): Promise<Response> {
+  const sessionId = c.req.param('sessionId');
+  if (!sessionId) {
+    throw new HTTPException(400, { message: 'Session ID required' });
+  }
+
+  const sessionManager = getSessionManager();
+  sessionManager.closeSession(sessionId);
+
+  return c.json({ message: 'Session closed' });
+}

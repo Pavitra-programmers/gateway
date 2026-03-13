@@ -1,8 +1,5 @@
-import { logger } from '../../apm';
 import { GatewayError } from '../../errors/GatewayError';
-import { FIREWORKS_AI } from '../../globals';
 import { createLineSplitter } from '../../handlers/streamHandlerUtils';
-import { externalServiceFetch } from '../../utils/fetch';
 import { RequestHandler } from '../types';
 import FireworksAIAPIConfig from './api';
 import { createDataset, getUploadEndpoint, validateDataset } from './utils';
@@ -11,11 +8,11 @@ export const FireworksFileUploadResponseTransform = (response: any) => {
   return response;
 };
 
+const encoder = new TextEncoder();
+
 export const FireworkFileUploadRequestHandler: RequestHandler<
   ReadableStream
 > = async ({ requestURL, requestBody, providerOptions, c, requestHeaders }) => {
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
   const headers = await FireworksAIAPIConfig.headers({
     c,
     providerOptions,
@@ -26,9 +23,9 @@ export const FireworkFileUploadRequestHandler: RequestHandler<
 
   const { fireworksFileLength } = providerOptions;
 
-  const contentLength = Number.parseInt(
-    fireworksFileLength || requestHeaders['content-length']
-  );
+  const contentLength =
+    Number.parseInt(fireworksFileLength || requestHeaders['content-length']) +
+    1;
 
   const baseURL = await FireworksAIAPIConfig.getBaseURL({
     c,
@@ -36,7 +33,7 @@ export const FireworkFileUploadRequestHandler: RequestHandler<
     gatewayRequestURL: requestURL,
   });
 
-  const datasetId = `ft-${crypto.randomUUID()}`;
+  const datasetId = crypto.randomUUID();
 
   const { created, error: createError } = await createDataset({
     datasetId,
@@ -45,22 +42,7 @@ export const FireworkFileUploadRequestHandler: RequestHandler<
   });
 
   if (!created || createError) {
-    const errorResponse = {
-      error: {
-        code: 400,
-        message: 'Failed to create dataset',
-        provider: FIREWORKS_AI,
-        details: {
-          reason: createError || 'Failed to create dataset',
-        },
-      },
-    };
-    return new Response(JSON.stringify(errorResponse), {
-      status: 400,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    throw new GatewayError(createError || 'Failed to create dataset');
   }
 
   const { endpoint: preSignedUrl, error } = await getUploadEndpoint({
@@ -71,35 +53,17 @@ export const FireworkFileUploadRequestHandler: RequestHandler<
   });
 
   if (error || !preSignedUrl) {
-    const errorResponse = {
-      error: {
-        code: 400,
-        message: 'Failed to get upload endpoint',
-        provider: FIREWORKS_AI,
-        details: {
-          reason: error || 'Failed to get upload endpoint',
-        },
-      },
-    };
-    return new Response(JSON.stringify(errorResponse), {
-      status: 400,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    throw new GatewayError(
+      error || 'Failed to get upload endpoint for firework-ai'
+    );
   }
-
-  let length = 0;
-
   // body might contain headers of form-data, cleaning it to match the content-length for gcs URL.
   const streamBody = new TransformStream({
     transform(chunk, controller) {
       try {
-        const decodedChunk = decoder.decode(chunk);
-        JSON.parse(decodedChunk);
-        length += chunk.length + 1;
-        controller.enqueue(chunk);
-        controller.enqueue(encoder.encode('\n'));
+        JSON.parse(chunk);
+        const encodedChunk = encoder.encode(chunk + '\n');
+        controller.enqueue(encodedChunk);
       } catch {
         return;
       }
@@ -124,36 +88,10 @@ export const FireworkFileUploadRequestHandler: RequestHandler<
       },
     };
 
-    const uploadResponse = await externalServiceFetch(preSignedUrl, options);
-
-    // TODO: Remove this after testing.
-    logger.info('File length from request - Actual file length', {
-      contentLength,
-      length,
-    });
+    const uploadResponse = await fetch(preSignedUrl, options);
 
     if (!uploadResponse.ok) {
-      const errorText = await uploadResponse.text();
-      const errorResponse = {
-        error: {
-          code: 400,
-          message: 'Unable to upload file',
-          provider: FIREWORKS_AI,
-          details: {
-            reason: errorText,
-            body: JSON.stringify({
-              contentLength,
-              datasetId,
-            }),
-          },
-        },
-      };
-      return new Response(JSON.stringify(errorResponse), {
-        status: 400,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
+      throw new GatewayError('Failed to upload file');
     }
 
     const { valid, error } = await validateDataset({
@@ -163,22 +101,7 @@ export const FireworkFileUploadRequestHandler: RequestHandler<
     });
 
     if (!valid || error) {
-      const errorResponse = {
-        error: {
-          code: 400,
-          message: 'Failed to validate dataset',
-          provider: FIREWORKS_AI,
-          details: {
-            reason: error || 'Failed to validate dataset',
-          },
-        },
-      };
-      return new Response(JSON.stringify(errorResponse), {
-        status: 400,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
+      throw new GatewayError(error || 'Failed to validate dataset');
     }
 
     const fileResponse = {

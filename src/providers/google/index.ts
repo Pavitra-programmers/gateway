@@ -6,7 +6,6 @@ import {
   GoogleChatCompleteStreamChunkTransform,
 } from './chatComplete';
 import { GoogleEmbedConfig, GoogleEmbedResponseTransform } from './embed';
-import { GoogleLogConfig } from './pricing';
 
 const GoogleConfig: ProviderConfigs = {
   api: GoogleApiConfig,
@@ -17,7 +16,6 @@ const GoogleConfig: ProviderConfigs = {
     'stream-chatComplete': GoogleChatCompleteStreamChunkTransform,
     embed: GoogleEmbedResponseTransform,
   },
-  pricing: GoogleLogConfig,
 };
 
 export default GoogleConfig;

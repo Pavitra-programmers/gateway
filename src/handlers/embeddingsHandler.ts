@@ -1,7 +1,8 @@
-import { logger } from '../apm';
 import { RouterError } from '../errors/RouterError';
-import { tryTargetsRecursively } from './handlerUtils';
-import { constructConfigFromRequestHeaders } from '../utils/request';
+import {
+  constructConfigFromRequestHeaders,
+  tryTargetsRecursively,
+} from './handlerUtils';
 import { Context } from 'hono';
 
 /**
@@ -14,14 +15,14 @@ import { Context } from 'hono';
  */
 export async function embeddingsHandler(c: Context): Promise<Response> {
   try {
-    const request = c.get('requestBodyData');
-    const requestHeaders = c.get('mappedHeaders');
+    let request = await c.req.json();
+    let requestHeaders = Object.fromEntries(c.req.raw.headers);
     const camelCaseConfig = constructConfigFromRequestHeaders(requestHeaders);
 
     const tryTargetsResponse = await tryTargetsRecursively(
       c,
       camelCaseConfig,
-      request.bodyJSON,
+      request,
       requestHeaders,
       'embed',
       'POST',
@@ -30,8 +31,7 @@ export async function embeddingsHandler(c: Context): Promise<Response> {
 
     return tryTargetsResponse;
   } catch (err: any) {
-    logger.error(`embeddings error: `, err);
-
+    console.error('embeddingsHandler error: ', err);
     let statusCode = 500;
     let errorMessage = 'Something went wrong';
 
@@ -43,10 +43,10 @@ export async function embeddingsHandler(c: Context): Promise<Response> {
     return new Response(
       JSON.stringify({
         status: 'failure',
-        message: errorMessage,
+        message: 'Something went wrong',
       }),
       {
-        status: statusCode,
+        status: 500,
         headers: {
           'content-type': 'application/json',
         },

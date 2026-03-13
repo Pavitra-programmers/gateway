@@ -2,7 +2,6 @@ import { ProviderConfig, RequestHandler } from '../types';
 import {
   generateSignedURL,
   getModelAndProvider,
-  getModelProviderFromModelID,
   GoogleResponseHandler,
   vertexRequestLineHandler,
 } from './utils';
@@ -12,16 +11,12 @@ import {
   VertexLlamaChatCompleteConfig,
 } from './chatComplete';
 import { chatCompleteParams, embedParams } from '../open-ai-base';
+import { BatchEndpoints, POWERED_BY } from '../../globals';
 import { transformUsingProviderConfig } from '../../services/transformToProviderRequest';
-import { nodeLineReader } from '../../handlers/streamHandlerUtils';
+import { createLineSplitter } from '../../handlers/streamHandlerUtils';
 import GoogleApiConfig from './api';
-import { BatchEndpoints } from '../../globals';
 import { VertexBatchEmbedConfig } from './embed';
-import { Readable, Transform } from 'stream';
-import { externalServiceFetchWithNodeFetch } from '../../utils/fetch';
-import { getRuntimeKey } from 'hono/adapter';
-
-const runtime = getRuntimeKey();
+import { GatewayError } from '../../errors/GatewayError';
 
 const PROVIDER_CONFIG: Record<
   string,
@@ -43,6 +38,8 @@ const PROVIDER_CONFIG: Record<
   },
 };
 
+const encoder = new TextEncoder();
+
 export const GoogleFileUploadRequestHandler: RequestHandler<
   ReadableStream
 > = async ({ c, providerOptions, requestBody, requestHeaders }) => {
@@ -53,7 +50,11 @@ export const GoogleFileUploadRequestHandler: RequestHandler<
     vertexBatchEndpoint = BatchEndpoints.CHAT_COMPLETIONS, //default to inference endpoint
   } = providerOptions;
 
-  if (!vertexModelName || !vertexStorageBucketName) {
+  let purpose = requestHeaders['x-portkey-file-purpose'] ?? '';
+  if (
+    (purpose === 'upload' ? false : !vertexModelName) ||
+    !vertexStorageBucketName
+  ) {
     return GoogleResponseHandler(
       'Invalid request, please provide `x-portkey-provider-model` and `x-portkey-vertex-storage-bucket-name` in the request headers',
       400
@@ -62,52 +63,33 @@ export const GoogleFileUploadRequestHandler: RequestHandler<
 
   const objectKey = filename ?? `${crypto.randomUUID()}.jsonl`;
   const bytes = requestHeaders['content-length'];
-  let finalVertexModelName = vertexModelName ?? '';
-  if (
-    finalVertexModelName.startsWith('projects') ||
-    finalVertexModelName.startsWith('publisher')
-  ) {
-    finalVertexModelName = finalVertexModelName.split('/').at(-1) || '';
-
-    const model = await getModelProviderFromModelID(
-      finalVertexModelName,
-      providerOptions
-    );
-
-    if (model) {
-      finalVertexModelName = model;
-    }
-  }
-
-  const { provider: modelProvider } = getModelAndProvider(
-    finalVertexModelName ?? ''
-  );
-
+  const { provider } = getModelAndProvider(vertexModelName ?? '');
   const providerConfigMap =
-    PROVIDER_CONFIG[modelProvider as keyof typeof PROVIDER_CONFIG];
+    PROVIDER_CONFIG[provider as keyof typeof PROVIDER_CONFIG];
 
   const providerConfig =
     providerConfigMap?.[vertexBatchEndpoint] ??
     PROVIDER_CONFIG['endpoints'][vertexBatchEndpoint];
 
   if (!providerConfig) {
-    throw new Error(
-      `Endpoint ${vertexBatchEndpoint} not supported for provider ${modelProvider}`
+    throw new GatewayError(
+      `Endpoint ${vertexBatchEndpoint} not supported for provider ${provider}`
     );
   }
 
   let isPurposeHeader = false;
-  let purpose = requestHeaders['x-portkey-file-purpose'] ?? '';
-  let transformStream;
+  let transformStream: ReadableStream<any> | TransformStream<any, any> =
+    requestBody;
   let uploadMethod = 'PUT';
+  // Create a reusable line splitter stream
+  const lineSplitter = createLineSplitter();
 
   if (purpose === 'upload') {
-    transformStream = Readable.fromWeb(requestBody as any);
     uploadMethod = 'POST';
   } else {
     // Transform stream to process each complete line.
-    transformStream = new Transform({
-      transform: function (chunk, _, callback) {
+    transformStream = new TransformStream({
+      transform: function (chunk, controller) {
         let buffer;
         try {
           const _chunk = chunk.toString();
@@ -117,34 +99,31 @@ export const GoogleFileUploadRequestHandler: RequestHandler<
 
           if (headerKey && headerKey === 'purpose') {
             isPurposeHeader = true;
-            callback();
             return;
           }
 
           if (isPurposeHeader && _chunk?.length > 0 && !purpose) {
             isPurposeHeader = false;
             purpose = _chunk.trim();
-            callback();
             return;
           }
 
           if (!_chunk) {
-            callback();
             return;
           }
 
           const json = JSON.parse(chunk.toString());
+
           if (json && !purpose) {
             // Close the stream.
-            this.end();
-            callback();
-            return;
+            controller.terminate();
           }
 
           const toTranspose = purpose === 'batch' ? json.body : json;
           const transformedBody = transformUsingProviderConfig(
             providerConfig,
-            toTranspose
+            toTranspose,
+            providerOptions
           );
 
           delete transformedBody['model'];
@@ -155,28 +134,24 @@ export const GoogleFileUploadRequestHandler: RequestHandler<
             transformedBody,
             json['custom_id']
           );
+
           buffer = JSON.stringify(bufferTransposed);
-        } catch (error) {
+        } catch {
           buffer = null;
         } finally {
           if (buffer) {
-            this.push(buffer + '\n');
+            controller.enqueue(encoder.encode(buffer + '\n'));
           }
         }
-        callback();
       },
-      flush: function (callback) {
-        callback();
-        this.end();
+      flush(controller) {
+        controller.terminate();
       },
     });
-
-    const lineReader = nodeLineReader();
-    const webStream = Readable.fromWeb(requestBody as any);
-
-    webStream.pipe(lineReader);
-    lineReader.pipe(transformStream);
+    requestBody.pipeThrough(lineSplitter).pipeTo(transformStream.writable);
   }
+
+  // Pipe the node stream through our line splitter and into the transform stream.
 
   const providerHeaders = await GoogleApiConfig.headers({
     c,
@@ -203,12 +178,11 @@ export const GoogleFileUploadRequestHandler: RequestHandler<
     );
   }
 
-  const body =
-    runtime === 'workerd'
-      ? (Readable.toWeb(transformStream) as any)
-      : transformStream;
   const options = {
-    body: body,
+    body:
+      uploadMethod === 'POST'
+        ? (transformStream as ReadableStream<any>)
+        : (transformStream as TransformStream).readable,
     headers: {
       ...(uploadMethod !== 'POST'
         ? { Authorization: providerHeaders.Authorization }
@@ -223,9 +197,7 @@ export const GoogleFileUploadRequestHandler: RequestHandler<
   };
 
   try {
-    const request = await externalServiceFetchWithNodeFetch(url, {
-      ...options,
-    });
+    const request = await fetch(url, { ...options });
     if (!request.ok) {
       const error = await request.text();
       return GoogleResponseHandler(error, request.status);
@@ -249,7 +221,6 @@ export const GoogleFileUploadRequestHandler: RequestHandler<
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
-
     return new Response(
       JSON.stringify({ message: 'Something went wrong', success: false }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }

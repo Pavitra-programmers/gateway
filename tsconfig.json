@@ -3,13 +3,14 @@
     "strict": true,
     "target": "ESNext",
     "module": "ESNext",
-    "moduleResolution": "bundler",
+    "moduleResolution": "node",
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "lib": ["esnext", "DOM", "DOM.Iterable"],
-    "types": ["@cloudflare/workers-types", "node", "@types/jest"],
+    "lib": ["esnext"],
+    "types": ["@cloudflare/workers-types", "node", "jest"],
     "jsx": "react-jsx",
     "jsxImportSource": "hono/jsx",
     "resolveJsonModule": true
-  }
+  },
+  "exclude": ["**/*.test.ts", "cookbook"]
 }

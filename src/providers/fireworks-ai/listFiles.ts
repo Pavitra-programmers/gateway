@@ -1,9 +1,17 @@
 import { FIREWORKS_AI } from '../../globals';
+import {
+  FireworksAIErrorResponse,
+  FireworksAIErrorResponseTransform,
+  FireworksAIValidationErrorResponse,
+} from './chatComplete';
 import { FireworksFile } from './types';
 import { fireworksDatasetToOpenAIFile } from './utils';
 
 export const FireworksFileListResponseTransform = (
-  response: any,
+  response: (FireworksAIValidationErrorResponse | FireworksAIErrorResponse) & {
+    datasets: FireworksFile[];
+    totalSize: number;
+  },
   responseStatus: number
 ) => {
   if (responseStatus === 200) {
@@ -20,7 +28,7 @@ export const FireworksFileListResponseTransform = (
 
   return {
     error: {
-      message: response.message ?? 'unable to fetch files.',
+      message: (response as any).message ?? 'unable to fetch files.',
       param: null,
     },
     provider: FIREWORKS_AI,

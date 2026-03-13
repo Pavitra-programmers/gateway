@@ -5,12 +5,11 @@ import {
   chatCompleteParams,
   responseTransformers,
   createSpeechParams,
-  createModelResponseParams,
 } from '../open-ai-base';
 import { GROQ } from '../../globals';
-import { GroqLogConfig } from './pricing';
 
 const GroqConfig: ProviderConfigs = {
+  api: GroqAPIConfig,
   chatComplete: chatCompleteParams(
     ['logprobs', 'logits_bias', 'top_logprobs'],
     undefined,
@@ -19,8 +18,6 @@ const GroqConfig: ProviderConfigs = {
       reasoning_effort: { param: 'reasoning_effort', required: false },
     }
   ),
-  createModelResponse: createModelResponseParams([]),
-  api: GroqAPIConfig,
   createTranscription: {},
   createTranslation: {},
   createSpeech: createSpeechParams([]),
@@ -31,7 +28,6 @@ const GroqConfig: ProviderConfigs = {
     }),
     'stream-chatComplete': GroqChatCompleteStreamChunkTransform,
   },
-  pricing: GroqLogConfig,
 };
 
 export default GroqConfig;

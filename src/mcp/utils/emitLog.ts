@@ -1,159 +1,148 @@
-import { Env } from 'hono';
-import { forwardMCPLogToWinky } from '../../middlewares/portkey/handlers/logger';
+/**
+ * MCP Gateway Tool Invocation Logger
+ * Logs tool invocations to the control plane for cost tracking
+ */
 
-type OtlpKeyValue = {
-  key: string;
-  value: {
-    stringValue?: string;
-    boolValue?: boolean;
-    intValue?: string;
-    doubleValue?: number;
-    arrayValue?: any;
-    kvlistValue?: any;
-  };
-};
+import { logger } from './logger.js';
+import { ENV_VARS } from '../constants/index.js';
+import type { ToolInvocationLog } from '../types/index.js';
 
-type OTLPRecord = {
-  timeUnixNano: string;
-  attributes: OtlpKeyValue[] | undefined;
-  traceId: string | undefined;
-  spanId: string | undefined;
-  status: { code: string };
-  name: string;
-};
+const log = logger.child('emitLog');
 
-// const BATCH_MAX = 100;
-// const FLUSH_INTERVAL = 3000; // 3 seconds
+interface ControlPlaneConfig {
+  url: string;
+  apiKey: string;
+}
 
-// const buffer: OTLPRecord[] = [];
-// let timer: NodeJS.Timeout | null = null;
+function getControlPlaneConfig(): ControlPlaneConfig | null {
+  const url = process.env[ENV_VARS.CONTROL_PLANE_URL];
+  const apiKey = process.env[ENV_VARS.CONTROL_PLANE_API_KEY];
 
-export function emitLog(
-  body: string | Record<string, unknown>,
-  attributes: Record<string, unknown>,
-  env: Env,
-  // optional trace context for correlation in backends
-  trace?: { traceId?: string; spanId?: string; flags?: number }
-) {
+  if (!url || !apiKey) {
+    log.debug('Control plane URL or API key not configured, tool logging disabled');
+    return null;
+  }
+
+  return { url, apiKey };
+}
+
+/**
+ * Log a tool invocation to the control plane for cost tracking
+ * Uses client API key for authorization and server URL for context
+ */
+export async function logToolInvocation(
+  invocation: ToolInvocationLog,
+  clientApiKey: string,
+  serverUrl: string
+): Promise<void> {
+  const config = getControlPlaneConfig();
+  if (!config) {
+    return;
+  }
+
   try {
-    const nowNs = Date.now() * 1_000_000;
-
-    // Separate heavy fields that don't need OTEL wrapping
-    const heavyFields = ['mcp.tool.params', 'mcp.tool.result', 'mcp.result'];
-    const lightAttributes: Record<string, unknown> = {};
-    const unwrappedAttributes: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(attributes)) {
-      if (heavyFields.includes(key)) {
-        // Store heavy fields unwrapped for direct use
-        unwrappedAttributes[key] = value;
-      } else {
-        // Wrap light metadata in OTEL format
-        lightAttributes[key] = value;
-      }
-    }
-
-    const record: OTLPRecord = {
-      timeUnixNano: String(nowNs),
-      attributes: toKv(lightAttributes),
-      traceId: trace?.traceId ?? undefined,
-      spanId: trace?.spanId ?? undefined,
-      status: {
-        code: 'STATUS_CODE_OK',
+    const response = await fetch(`${config.url}/v2/mcp-tool-invocations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+        'x-portkey-api-key': clientApiKey,
       },
-      name: 'mcp.request',
-    };
+      body: JSON.stringify({
+        request_id: invocation.requestId,
+        mcp_server_url: serverUrl,
+        tool_name: invocation.toolName,
+        input_tokens: invocation.inputTokens,
+        output_tokens: invocation.outputTokens,
+        duration_ms: invocation.durationMs,
+        status: invocation.status,
+        error_message: invocation.errorMessage,
+      }),
+    });
 
-    // Attach unwrapped heavy fields directly to record for easy access
-    (record as any)._unwrapped = unwrappedAttributes;
-
-    forwardMCPLogToWinky(env, record);
-    // buffer.push(record);
-    // if (buffer.length >= BATCH_MAX) void flush();
-    // else schedule();
-  } catch {
-    /* never throw from logging */
-  }
-}
-
-// function schedule() {
-//   if (timer) return;
-//   timer = setTimeout(() => {
-//     timer = null;
-//     void flush();
-//   }, FLUSH_INTERVAL);
-// }
-
-// function flush() {
-//   if (buffer.length === 0) return;
-
-//   const batch = buffer.splice(0, buffer.length);
-//   const payload = buildPayload(batch);
-
-//   console.log(
-//     'TODO: flush logs. Length:',
-//     JSON.stringify(payload, null, 2).length
-//   );
-
-//   // fetch('/v1/logs', {
-//   //     method: 'POST',
-//   //     body: JSON.stringify(payload),
-//   // });
-// }
-
-function toKv(attrs?: Record<string, unknown>): OtlpKeyValue[] | undefined {
-  if (!attrs) return undefined;
-  const out: OtlpKeyValue[] = [];
-  for (const [k, v] of Object.entries(attrs)) {
-    out.push({ key: k, value: toAnyValue(v) });
-  }
-  return out.length ? out : undefined;
-}
-
-function toAnyValue(v: unknown): any {
-  try {
-    if (v == null) return { stringValue: '' };
-    if (typeof v === 'string') return { stringValue: v };
-    if (typeof v === 'number') {
-      return Number.isInteger(v) ? { intValue: String(v) } : { doubleValue: v };
+    if (!response.ok) {
+      log.warn('Failed to log tool invocation', {
+        status: response.status,
+        statusText: response.statusText,
+        toolName: invocation.toolName,
+      });
+    } else {
+      log.debug('Tool invocation logged successfully', {
+        toolName: invocation.toolName,
+        durationMs: invocation.durationMs,
+        status: invocation.status,
+      });
     }
-    if (typeof v === 'boolean') return { boolValue: v };
-    if (Array.isArray(v)) return { arrayValue: { values: v.map(toAnyValue) } };
-    if (typeof v === 'object') {
-      return {
-        kvlistValue: {
-          values: Object.entries(v as Record<string, unknown>).map(
-            ([k, val]) => ({ key: k, value: toAnyValue(val) })
-          ),
+  } catch (error) {
+    // Non-blocking - don't fail the request if logging fails
+    log.warn('Error logging tool invocation', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      toolName: invocation.toolName,
+    });
+  }
+}
+
+/**
+ * Helper to create a tool invocation logger with timing
+ */
+export function createToolInvocationTracker(
+  apiKey: string,
+  serverUrl: string,
+  requestId?: string
+) {
+  const startTimes = new Map<string, number>();
+
+  return {
+    start(toolName: string): void {
+      startTimes.set(toolName, Date.now());
+    },
+
+    async end(
+      toolName: string,
+      status: 'success' | 'error' | 'timeout',
+      errorMessage?: string
+    ): Promise<void> {
+      const startTime = startTimes.get(toolName);
+      const durationMs = startTime ? Date.now() - startTime : undefined;
+      startTimes.delete(toolName);
+
+      await logToolInvocation(
+        {
+          requestId,
+          toolName,
+          durationMs,
+          status,
+          errorMessage,
         },
-      };
-    }
-    return { stringValue: String(v) };
-  } catch {
-    return { stringValue: '[unserializable]' };
-  }
+        apiKey,
+        serverUrl
+      );
+    },
+
+    async logDirect(invocation: Omit<ToolInvocationLog, 'requestId'>): Promise<void> {
+      await logToolInvocation(
+        {
+          ...invocation,
+          requestId,
+        },
+        apiKey,
+        serverUrl
+      );
+    },
+  };
 }
 
-// function buildPayload(logRecords: OTLPRecord[]) {
-//   return {
-//     resourceSpans: [
-//       {
-//         resource: {
-//           attributes: toKv({
-//             'service.name': 'mcp-gateway',
-//           }),
-//         },
-//         scopeSpans: [
-//           {
-//             scope: {
-//               attributes: toKv({
-//                 name: 'mcp',
-//               }),
-//             },
-//             spans: logRecords,
-//           },
-//         ],
-//       },
-//     ],
-//   };
-// }
+/**
+ * Batch log multiple tool invocations (for efficiency)
+ */
+export async function logToolInvocationsBatch(
+  invocations: ToolInvocationLog[],
+  apiKey: string,
+  serverUrl: string
+): Promise<void> {
+  // For now, just log individually
+  // TODO: Implement batch endpoint in control plane if needed
+  await Promise.all(
+    invocations.map((inv) => logToolInvocation(inv, apiKey, serverUrl))
+  );
+}

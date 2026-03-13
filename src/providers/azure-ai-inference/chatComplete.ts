@@ -1,4 +1,4 @@
-import { Message, Params } from '../../types/requestBody';
+import { Params } from '../../types/requestBody';
 import { OpenAIErrorResponseTransform } from '../openai/utils';
 import {
   ChatCompletionResponse,
@@ -16,7 +16,7 @@ export const AzureAIInferenceChatCompleteConfig: ProviderConfig = {
     param: 'messages',
     default: '',
     transform: (params: Params) => {
-      return params.messages?.map((message: Message) => {
+      return params.messages?.map((message) => {
         if (message.role === 'developer') return { ...message, role: 'system' };
         return message;
       });
@@ -116,9 +116,6 @@ export const AzureAIInferenceChatCompleteConfig: ProviderConfig = {
   },
   prompt_cache_key: {
     param: 'prompt_cache_key',
-  },
-  prompt_cache_retention: {
-    param: 'prompt_cache_retention',
   },
   safety_identifier: {
     param: 'safety_identifier',

@@ -14,7 +14,6 @@ import {
   TogetherAIEmbedConfig,
   TogetherAIEmbedResponseTransform,
 } from './embed';
-import { TogetherAiLogConfig } from './pricing';
 
 const TogetherAIConfig: ProviderConfigs = {
   complete: TogetherAICompleteConfig,
@@ -28,7 +27,6 @@ const TogetherAIConfig: ProviderConfigs = {
     'stream-chatComplete': TogetherAIChatCompleteStreamChunkTransform,
     embed: TogetherAIEmbedResponseTransform,
   },
-  pricing: TogetherAiLogConfig,
 };
 
 export default TogetherAIConfig;

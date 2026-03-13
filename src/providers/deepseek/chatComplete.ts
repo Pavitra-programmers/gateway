@@ -1,5 +1,5 @@
 import { DEEPSEEK } from '../../globals';
-import { Message, Params } from '../../types/requestBody';
+import { Params } from '../../types/requestBody';
 
 import {
   ChatCompletionResponse,
@@ -23,7 +23,7 @@ export const DeepSeekChatCompleteConfig: ProviderConfig = {
     param: 'messages',
     default: '',
     transform: (params: Params) => {
-      return params.messages?.map((message: Message) => {
+      return params.messages?.map((message) => {
         if (message.role === 'developer') return { ...message, role: 'system' };
         return message;
       });
@@ -183,12 +183,14 @@ export const DeepSeekChatCompleteStreamChunkTransform: (
   response: string,
   fallbackId: string,
   streamState: any,
-  strictOpenAiCompliance: boolean
+  strictOpenAiCompliance: boolean,
+  gatewayRequest: Params
 ) => string | string[] = (
   responseChunk,
   fallbackId,
   _streamState,
-  strictOpenAiCompliance
+  strictOpenAiCompliance,
+  _gatewayRequest
 ) => {
   let chunk = responseChunk.trim();
   chunk = chunk.replace(/^data: /, '');

@@ -1,4 +1,3 @@
-import { externalServiceFetch } from '../../utils/fetch';
 import { RequestHandler } from '../types';
 import GoogleApiConfig from './api';
 import { getBucketAndFile } from './utils';
@@ -15,7 +14,7 @@ export const GoogleRetrieveFileRequestHandler: RequestHandler = async ({
 
   const url = `https://storage.googleapis.com/${bucket}/${file}`;
 
-  const response = await externalServiceFetch(url, { headers, method: 'HEAD' });
+  const response = await fetch(url, { headers, method: 'HEAD' });
 
   if (response.status !== 200) {
     throw new Error('File not found');

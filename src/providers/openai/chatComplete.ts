@@ -124,9 +124,6 @@ export const OpenAIChatCompleteConfig: ProviderConfig = {
   prompt_cache_key: {
     param: 'prompt_cache_key',
   },
-  prompt_cache_retention: {
-    param: 'prompt_cache_retention',
-  },
   safety_identifier: {
     param: 'safety_identifier',
   },
@@ -137,7 +134,6 @@ export const OpenAIChatCompleteConfig: ProviderConfig = {
 
 export interface OpenAIChatCompleteResponse extends ChatCompletionResponse {
   system_fingerprint: string;
-  service_tier: string;
 }
 
 export const OpenAIChatCompleteResponseTransform: (
@@ -163,8 +159,7 @@ export const OpenAIChatCompleteJSONToStreamResponseTransform: (
   provider: string
 ) => Array<string> = (response, provider) => {
   const streamChunkArray: Array<string> = [];
-  const { id, model, system_fingerprint, choices, citations, service_tier } =
-    response;
+  const { id, model, system_fingerprint, choices, citations } = response;
 
   const {
     prompt_tokens,
@@ -200,7 +195,6 @@ export const OpenAIChatCompleteJSONToStreamResponseTransform: (
       }),
       ...(num_search_queries && { num_search_queries }),
     },
-    ...(service_tier && { service_tier }),
     ...(citations && { citations }),
   };
 

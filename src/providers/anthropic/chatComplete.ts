@@ -3,8 +3,8 @@ import {
   Params,
   Message,
   ContentType,
-  PromptCache,
   SYSTEM_MESSAGE_ROLES,
+  PromptCache,
   ToolChoiceObject,
 } from '../../types/requestBody';
 import {
@@ -19,6 +19,7 @@ import {
   ANTHROPIC_STOP_REASON,
 } from './types';
 import {
+  generateErrorResponse,
   generateInvalidProviderResponseError,
   transformFinishReason,
 } from '../utils';
@@ -59,11 +60,6 @@ interface AnthropicTool extends PromptCache {
    * Example inputs demonstrating how to use this tool.
    */
   input_examples?: Record<string, any>[];
-  /**
-   * When true, Anthropic uses constrained decoding to guarantee
-   * tool call arguments conform to the input_schema.
-   */
-  strict?: boolean;
 }
 
 interface AnthropicToolResultContentItem {
@@ -170,7 +166,7 @@ const transformAssistantMessage = (msg: Message): AnthropicMessage => {
         type: 'tool_use',
         name: toolCall.function.name,
         id: toolCall.id,
-        input: toolCall.function.arguments?.length // we need to send an empty object if the arguments are not provided
+        input: toolCall.function.arguments?.length
           ? JSON.parse(toolCall.function.arguments)
           : {},
         ...(toolCall.cache_control && {
@@ -269,35 +265,10 @@ const transformAndAppendFileContentItem = (
   }
 };
 
-/**
- * Build Anthropic's output_config from OpenAI-compatible params.
- * Merges response_format → output_config.format and reasoning_effort → output_config.effort.
- */
-const buildAnthropicOutputConfig = (
-  params: Params
-): Record<string, any> | undefined => {
-  const outputConfig: Record<string, any> = {};
-
-  if (params.response_format?.type === 'json_schema') {
-    outputConfig.format = {
-      type: 'json_schema',
-      schema:
-        params.response_format.json_schema?.schema ??
-        params.response_format.json_schema,
-    };
-  }
-
-  if (params.reasoning_effort) {
-    outputConfig.effort = params.reasoning_effort;
-  }
-
-  return Object.keys(outputConfig).length > 0 ? outputConfig : undefined;
-};
-
 export const AnthropicChatCompleteConfig: ProviderConfig = {
   model: {
     param: 'model',
-    default: 'claude-sonnet-4-5',
+    default: 'claude-2.1',
     required: true,
   },
   messages: [
@@ -307,7 +278,7 @@ export const AnthropicChatCompleteConfig: ProviderConfig = {
       transform: (params: Params) => {
         let messages: AnthropicMessage[] = [];
         // Transform the chat messages into a simple prompt
-        if (params.messages) {
+        if (!!params.messages) {
           params.messages.forEach((msg: Message & PromptCache) => {
             if (SYSTEM_MESSAGE_ROLES.includes(msg.role)) return;
 
@@ -359,7 +330,7 @@ export const AnthropicChatCompleteConfig: ProviderConfig = {
       transform: (params: Params) => {
         let systemMessages: AnthropicMessageContentItem[] = [];
         // Transform the chat messages into a simple prompt
-        if (params.messages) {
+        if (!!params.messages) {
           params.messages.forEach((msg: Message & PromptCache) => {
             if (
               SYSTEM_MESSAGE_ROLES.includes(msg.role) &&
@@ -398,7 +369,7 @@ export const AnthropicChatCompleteConfig: ProviderConfig = {
     param: 'tools',
     required: false,
     transform: (params: Params) => {
-      const tools: AnthropicTool[] = [];
+      let tools: AnthropicTool[] = [];
       if (params.tools) {
         params.tools.forEach((tool) => {
           if (tool.function) {
@@ -423,9 +394,6 @@ export const AnthropicChatCompleteConfig: ProviderConfig = {
               }),
               ...(tool.function.input_examples && {
                 input_examples: tool.function.input_examples,
-              }),
-              ...(tool.function.strict !== undefined && {
-                strict: tool.function.strict,
               }),
             });
           } else if (tool.type) {
@@ -467,7 +435,6 @@ export const AnthropicChatCompleteConfig: ProviderConfig = {
   max_tokens: {
     param: 'max_tokens',
     required: true,
-    default: 64000,
   },
   max_completion_tokens: {
     param: 'max_tokens',
@@ -502,31 +469,6 @@ export const AnthropicChatCompleteConfig: ProviderConfig = {
     param: 'thinking',
     required: false,
   },
-  // Build output_config from response_format and/or reasoning_effort.
-  // Both map to the same Anthropic param, so we use a shared builder.
-  // - response_format.json_schema → output_config.format
-  // - reasoning_effort → output_config.effort
-  // See: https://docs.anthropic.com/en/docs/build-with-claude/structured-outputs
-  // See: https://platform.claude.com/docs/en/build-with-claude/effort
-  response_format: {
-    param: 'output_config',
-    required: false,
-    transform: (params: Params) => buildAnthropicOutputConfig(params),
-  },
-  reasoning_effort: [
-    {
-      param: 'output_config',
-      required: false,
-      transform: (params: Params) => buildAnthropicOutputConfig(params),
-    },
-    {
-      param: 'thinking',
-      required: false,
-      transform: (params: Params) => {
-        return { type: 'adaptive' };
-      },
-    },
-  ],
 };
 
 interface AnthorpicTextContentItem {
@@ -582,13 +524,13 @@ export interface AnthropicChatCompleteStreamResponse {
     cache_read_input_tokens?: number;
   };
   message?: {
-    model?: string;
     usage?: {
       output_tokens?: number;
       input_tokens?: number;
       cache_creation_input_tokens?: number;
       cache_read_input_tokens?: number;
     };
+    model?: string;
   };
   error?: AnthropicErrorObject;
 }
@@ -615,7 +557,7 @@ export const getAnthropicChatCompleteResponseTransform = (provider: string) => {
         output_tokens = 0,
         cache_creation_input_tokens,
         cache_read_input_tokens,
-      } = response?.usage ?? {};
+      } = response?.usage;
 
       const shouldSendCacheUsage =
         cache_creation_input_tokens || cache_read_input_tokens;
@@ -627,7 +569,7 @@ export const getAnthropicChatCompleteResponseTransform = (provider: string) => {
         }
       });
 
-      const toolCalls: any = [];
+      let toolCalls: any = [];
       response.content.forEach((item) => {
         if (item.type === 'tool_use') {
           toolCalls.push({
@@ -640,12 +582,6 @@ export const getAnthropicChatCompleteResponseTransform = (provider: string) => {
           });
         }
       });
-
-      const promptTokens =
-        input_tokens +
-        (cache_read_input_tokens ?? 0) +
-        (cache_creation_input_tokens ?? 0);
-      const totalTokens = promptTokens + output_tokens;
 
       return {
         id: response.id,
@@ -674,9 +610,13 @@ export const getAnthropicChatCompleteResponseTransform = (provider: string) => {
           },
         ],
         usage: {
-          prompt_tokens: promptTokens,
+          prompt_tokens: input_tokens,
           completion_tokens: output_tokens,
-          total_tokens: totalTokens,
+          total_tokens:
+            input_tokens +
+            output_tokens +
+            (cache_creation_input_tokens ?? 0) +
+            (cache_read_input_tokens ?? 0),
           prompt_tokens_details: {
             cached_tokens: cache_read_input_tokens ?? 0,
           },
@@ -693,15 +633,12 @@ export const getAnthropicChatCompleteResponseTransform = (provider: string) => {
   return AnthropicChatCompleteResponseTransform;
 };
 
-export const getAnthropicStreamChunkTransform = (
-  provider: string,
-  chunkPatternsToIgnore?: string[]
-) => {
+export const getAnthropicStreamChunkTransform = (provider: string) => {
   const AnthropicChatCompleteStreamChunkTransform: (
     response: string,
     fallbackId: string,
     streamState: AnthropicStreamState,
-    strictOpenAiCompliance: boolean
+    _strictOpenAiCompliance: boolean
   ) => string | undefined = (
     responseChunk,
     fallbackId,
@@ -714,8 +651,7 @@ export const getAnthropicStreamChunkTransform = (
     let chunk = responseChunk.trim();
     if (
       chunk.startsWith('event: ping') ||
-      chunk.startsWith('event: content_block_stop') ||
-      chunkPatternsToIgnore?.some((pattern) => chunk.startsWith(pattern))
+      chunk.startsWith('event: content_block_stop')
     ) {
       return;
     }
@@ -756,14 +692,20 @@ export const getAnthropicStreamChunkTransform = (
       );
     }
 
+    const shouldSendCacheUsage =
+      parsedChunk.message?.usage?.cache_read_input_tokens ||
+      parsedChunk.message?.usage?.cache_creation_input_tokens;
+
     if (parsedChunk.type === 'message_start' && parsedChunk.message?.usage) {
       streamState.model = parsedChunk?.message?.model ?? '';
       streamState.usage = {
-        input_tokens: parsedChunk.message?.usage?.input_tokens,
-        cache_read_input_tokens:
-          parsedChunk.message?.usage?.cache_read_input_tokens,
-        cache_creation_input_tokens:
-          parsedChunk.message?.usage?.cache_creation_input_tokens,
+        prompt_tokens: parsedChunk.message?.usage?.input_tokens,
+        ...(shouldSendCacheUsage && {
+          cache_read_input_tokens:
+            parsedChunk.message?.usage?.cache_read_input_tokens,
+          cache_creation_input_tokens:
+            parsedChunk.message?.usage?.cache_creation_input_tokens,
+        }),
       };
       return (
         `data: ${JSON.stringify({
@@ -789,21 +731,11 @@ export const getAnthropicStreamChunkTransform = (
 
     // final chunk
     if (parsedChunk.type === 'message_delta' && parsedChunk.usage) {
-      const {
-        input_tokens = streamState.usage?.input_tokens ?? 0,
-        output_tokens = 0,
-        cache_creation_input_tokens = streamState.usage
-          ?.cache_creation_input_tokens ?? 0,
-        cache_read_input_tokens = streamState.usage?.cache_read_input_tokens ??
-          0,
-      } = parsedChunk.usage;
-      const promptTokens =
-        input_tokens +
-        (cache_read_input_tokens ?? 0) +
-        (cache_creation_input_tokens ?? 0);
-      const totalTokens = promptTokens + output_tokens;
-      const shouldSendCacheUsage =
-        cache_read_input_tokens || cache_creation_input_tokens;
+      const totalTokens =
+        (streamState?.usage?.prompt_tokens ?? 0) +
+        (streamState?.usage?.cache_creation_input_tokens ?? 0) +
+        (streamState?.usage?.cache_read_input_tokens ?? 0) +
+        (parsedChunk.usage.output_tokens ?? 0);
       return (
         `data: ${JSON.stringify({
           id: fallbackId,
@@ -822,16 +754,12 @@ export const getAnthropicStreamChunkTransform = (
             },
           ],
           usage: {
-            prompt_tokens: promptTokens,
-            completion_tokens: output_tokens,
+            ...streamState.usage,
+            completion_tokens: parsedChunk.usage?.output_tokens,
             total_tokens: totalTokens,
             prompt_tokens_details: {
-              cached_tokens: cache_read_input_tokens ?? 0,
+              cached_tokens: streamState.usage?.cache_read_input_tokens ?? 0,
             },
-            ...(shouldSendCacheUsage && {
-              cache_read_input_tokens: cache_read_input_tokens,
-              cache_creation_input_tokens: cache_creation_input_tokens,
-            }),
           },
         })}` + '\n\n'
       );
@@ -886,7 +814,6 @@ export const getAnthropicStreamChunkTransform = (
           {
             delta: {
               content,
-              role: 'assistant',
               tool_calls: toolCalls.length ? toolCalls : undefined,
               ...(!strictOpenAiCompliance &&
                 !toolCalls.length && {

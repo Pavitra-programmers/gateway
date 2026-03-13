@@ -1,7 +1,10 @@
 import { LEMONFOX_AI } from '../../globals';
 import { ErrorResponse, ImageGenerateResponse, ProviderConfig } from '../types';
 
-import { generateErrorResponse } from '../utils';
+import {
+  generateErrorResponse,
+  generateInvalidProviderResponseError,
+} from '../utils';
 
 export const LemonfoxAIImageGenerateConfig: ProviderConfig = {
   prompt: {

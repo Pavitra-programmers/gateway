@@ -1,9 +1,11 @@
 import { Context } from 'hono';
+import { addBackgroundTask } from '../utils/misc';
 
-export class RealTimeLLMEventParser {
+export class RealtimeLlmEventParser {
   private sessionState: any;
+  private eventLogger: Function | null;
 
-  constructor() {
+  constructor(eventLogger?: Function) {
     this.sessionState = {
       sessionDetails: null,
       conversation: {
@@ -11,10 +13,28 @@ export class RealTimeLLMEventParser {
       },
       responses: new Map<string, any>(),
     };
+    this.eventLogger = eventLogger || null;
   }
 
   // Main entry point for processing events
   handleEvent(c: Context, event: any, sessionOptions: any): void {
+    // Handle Gemini Live API format (different from OpenAI Realtime)
+    // Gemini sends: { serverContent: {...}, usageMetadata: {...} }
+    // OpenAI sends: { type: 'response.done', response: {...} }
+    
+    if (event.serverContent || event.usageMetadata) {
+      // This is a Gemini Live API response
+      this.handleGeminiResponse(c, event, sessionOptions);
+      return;
+    }
+    
+    if (event.setupComplete) {
+      // Gemini setup complete - log session start
+      this.handleGeminiSetup(c, event, sessionOptions);
+      return;
+    }
+    
+    // Handle OpenAI Realtime API format
     switch (event.type) {
       case 'session.created':
         this.handleSessionCreated(c, event, sessionOptions);
@@ -22,13 +42,7 @@ export class RealTimeLLMEventParser {
       case 'session.updated':
         this.handleSessionUpdated(c, event, sessionOptions);
         break;
-      case 'conversation.created':
-        // xAI sends this event when a conversation is initialized
-        this.handleConversationCreated(c, event, sessionOptions);
-        break;
       case 'conversation.item.created':
-      case 'conversation.item.added':
-        // Handle both OpenAI and xAI event naming conventions
         this.handleConversationItemCreated(c, event);
         break;
       case 'conversation.item.deleted':
@@ -41,7 +55,7 @@ export class RealTimeLLMEventParser {
         this.handleError(c, event, sessionOptions);
         break;
       default:
-      // console.warn(`Unhandled event type: ${event.type}`);
+        break;
     }
   }
 
@@ -52,15 +66,21 @@ export class RealTimeLLMEventParser {
     sessionOptions: any
   ): void {
     this.sessionState.sessionDetails = { ...data.session };
-    const realtimeEventParser = c.get('realtimeEventParser');
-    if (realtimeEventParser) {
-      realtimeEventParser(
+    console.log('[RealtimeLlmEventParser] session.created', {
+      hasLogger: Boolean(this.eventLogger),
+    });
+    if (this.eventLogger) {
+      addBackgroundTask(
         c,
-        sessionOptions,
-        {},
-        { ...data.session },
-        data.type
+        this.eventLogger(
+          sessionOptions,
+          {},
+          { ...data.session },
+          data.type
+        )
       );
+    } else {
+      console.error('[RealtimeLlmEventParser] eventLogger not configured for session.created');
     }
   }
 
@@ -71,37 +91,21 @@ export class RealTimeLLMEventParser {
     sessionOptions: any
   ): void {
     this.sessionState.sessionDetails = { ...data.session };
-    const realtimeEventParser = c.get('realtimeEventParser');
-    if (realtimeEventParser) {
-      realtimeEventParser(
+    console.log('[RealtimeLlmEventParser] session.updated', {
+      hasLogger: Boolean(this.eventLogger),
+    });
+    if (this.eventLogger) {
+      addBackgroundTask(
         c,
-        sessionOptions,
-        {},
-        { ...data.session },
-        data.type
+        this.eventLogger(
+          sessionOptions,
+          {},
+          { ...data.session },
+          data.type
+        )
       );
-    }
-  }
-
-  // Handle `conversation.created` event (xAI specific)
-  private handleConversationCreated(
-    c: Context,
-    data: any,
-    sessionOptions: any
-  ): void {
-    // Store conversation details if provided
-    if (data.conversation) {
-      this.sessionState.conversationId = data.conversation.id;
-    }
-    const realtimeEventParser = c.get('realtimeEventParser');
-    if (realtimeEventParser) {
-      realtimeEventParser(
-        c,
-        sessionOptions,
-        {},
-        { ...data.conversation },
-        data.type
-      );
+    } else {
+      console.error('[RealtimeLlmEventParser] eventLogger not configured for session.updated');
     }
   }
 
@@ -125,29 +129,46 @@ export class RealTimeLLMEventParser {
         item,
       });
     }
-    const realtimeEventParser = c.get('realtimeEventParser');
-    if (realtimeEventParser) {
+    console.log('[RealtimeLlmEventParser] response.done', {
+      hasLogger: Boolean(this.eventLogger),
+      usage: response.usage,
+    });
+    if (this.eventLogger) {
       const itemSequence = this.rebuildConversationSequence(
         this.sessionState.conversation.items
       );
-      realtimeEventParser(
+      addBackgroundTask(
         c,
-        sessionOptions,
-        {
-          conversation: {
-            items: this.getOrderedConversationItems(itemSequence).slice(0, -1),
+        this.eventLogger(
+          sessionOptions,
+          {
+            conversation: {
+              items: this.getOrderedConversationItems(itemSequence).slice(
+                0,
+                -1
+              ),
+            },
           },
-        },
-        data,
-        data.type
+          data,
+          data.type
+        )
       );
+    } else {
+      console.error('[RealtimeLlmEventParser] eventLogger not configured for response.done');
     }
   }
 
   private handleError(c: Context, data: any, sessionOptions: any): void {
-    const realtimeEventParser = c.get('realtimeEventParser');
-    if (realtimeEventParser) {
-      realtimeEventParser(c, sessionOptions, {}, data, data.type);
+    console.log('[RealtimeLlmEventParser] error', {
+      hasLogger: Boolean(this.eventLogger),
+    });
+    if (this.eventLogger) {
+      addBackgroundTask(
+        c,
+        this.eventLogger(sessionOptions, {}, data, data.type)
+      );
+    } else {
+      console.warn('[RealtimeLlmEventParser] eventLogger not configured for error');
     }
   }
 
@@ -174,4 +195,56 @@ export class RealTimeLLMEventParser {
   private getOrderedConversationItems(sequence: string[]): any {
     return sequence.map((id) => this.sessionState.conversation.items.get(id)!);
   }
+
+  // Handle Gemini Live API setup complete
+  private handleGeminiSetup(c: Context, data: any, sessionOptions: any): void {
+    console.log('[RealtimeLlmEventParser] Gemini setup complete', {
+      hasLogger: Boolean(this.eventLogger),
+    });
+    if (this.eventLogger) {
+      addBackgroundTask(
+        c,
+        this.eventLogger(
+          sessionOptions,
+          {},
+          { setupComplete: true },
+          'session.created'
+        )
+      );
+    }
+  }
+
+  // Handle Gemini Live API response with usage metadata
+  private handleGeminiResponse(c: Context, data: any, sessionOptions: any): void {
+    console.log('[RealtimeLlmEventParser] Gemini response', {
+      hasLogger: Boolean(this.eventLogger),
+      hasUsage: Boolean(data.usageMetadata),
+      usage: data.usageMetadata,
+    });
+    
+    if (this.eventLogger && data.usageMetadata) {
+      // Convert Gemini usage format to standard format
+      const response = {
+        usage: {
+          input_tokens: data.usageMetadata.promptTokenCount || 0,
+          output_tokens: data.usageMetadata.responseTokenCount || data.usageMetadata.candidatesTokenCount || 0,
+          total_tokens: data.usageMetadata.totalTokenCount || 0,
+        },
+        model: sessionOptions.providerOptions?.model || 'gemini-2.5-flash-native-audio-preview-12-2025',
+      };
+      
+      addBackgroundTask(
+        c,
+        this.eventLogger(
+          sessionOptions,
+          {},
+          { response, serverContent: data.serverContent },
+          'response.done'
+        )
+      );
+    } else {
+      console.error('[RealtimeLlmEventParser] eventLogger not configured or no usage metadata');
+    }
+  }
+
 }

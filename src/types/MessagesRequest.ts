@@ -1,6 +1,5 @@
 export interface CacheControlEphemeral {
   type: 'ephemeral';
-  scope?: 'global';
 }
 
 export interface ServerToolUseBlockParam {
@@ -349,18 +348,9 @@ export interface ThinkingConfigDisabled {
   type: 'disabled';
 }
 
-/**
- * Adaptive thinking automatically adjusts reasoning depth based on task complexity.
- * Recommended for Claude 4.6+ models. Use the effort parameter to control thinking depth.
- */
-export interface ThinkingConfigAdaptive {
-  type: 'adaptive';
-}
-
 export type ThinkingConfigParam =
   | ThinkingConfigEnabled
-  | ThinkingConfigDisabled
-  | ThinkingConfigAdaptive;
+  | ThinkingConfigDisabled;
 
 /**
  * The model will use any available tools.
@@ -461,6 +451,27 @@ export interface Tool {
   description?: string;
 
   type?: 'custom' | null;
+
+  /**
+   * When true, this tool is not loaded into context initially.
+   * Claude discovers it via Tool Search Tool on-demand.
+   * Part of Anthropic's advanced tool use beta (advanced-tool-use-2025-11-20).
+   */
+  defer_loading?: boolean;
+
+  /**
+   * List of tool types that can call this tool programmatically.
+   * E.g., ["code_execution_20250825"] enables Programmatic Tool Calling.
+   * Part of Anthropic's advanced tool use beta (advanced-tool-use-2025-11-20).
+   */
+  allowed_callers?: string[];
+
+  /**
+   * Example inputs demonstrating how to use this tool.
+   * Helps Claude understand usage patterns beyond JSON schema.
+   * Part of Anthropic's advanced tool use beta (advanced-tool-use-2025-11-20).
+   */
+  input_examples?: Record<string, any>[];
 }
 
 export interface ToolBash20250124 {
@@ -576,15 +587,100 @@ export interface TextEditor20250429 {
   cache_control?: CacheControlEphemeral | null;
 }
 
-export interface TextEditor20250728 {
+/**
+ * Tool Search Tool with regex-based search.
+ * Enables Claude to discover tools on-demand instead of loading all upfront.
+ * Part of Anthropic's advanced tool use beta (advanced-tool-use-2025-11-20).
+ */
+export interface ToolSearchToolRegex {
   /**
-   * Name of the tool.
-   *
-   * This is how the tool will be called by the model and in `tool_use` blocks.
+   * Name of the tool search tool.
    */
-  name: 'str_replace_based_edit_tool';
+  name: string;
 
-  type: 'text_editor_20250728';
+  type: 'tool_search_tool_regex_20251119';
+
+  /**
+   * Create a cache control breakpoint at this content block.
+   */
+  cache_control?: CacheControlEphemeral | null;
+}
+
+/**
+ * Tool Search Tool with BM25-based search.
+ * Enables Claude to discover tools on-demand instead of loading all upfront.
+ * Part of Anthropic's advanced tool use beta (advanced-tool-use-2025-11-20).
+ */
+export interface ToolSearchToolBM25 {
+  /**
+   * Name of the tool search tool.
+   */
+  name: string;
+
+  type: 'tool_search_tool_bm25_20251119';
+
+  /**
+   * Create a cache control breakpoint at this content block.
+   */
+  cache_control?: CacheControlEphemeral | null;
+}
+
+/**
+ * Code Execution Tool for Programmatic Tool Calling.
+ * Allows Claude to invoke tools from within a code execution environment.
+ * Part of Anthropic's advanced tool use beta (advanced-tool-use-2025-11-20).
+ */
+export interface CodeExecutionTool {
+  /**
+   * Name of the code execution tool.
+   */
+  name: string;
+
+  type: 'code_execution_20250825';
+
+  /**
+   * Create a cache control breakpoint at this content block.
+   */
+  cache_control?: CacheControlEphemeral | null;
+}
+
+/**
+ * Configuration for individual tools within an MCP toolset.
+ */
+export interface MCPToolConfig {
+  /**
+   * When true, this tool is not loaded into context initially.
+   */
+  defer_loading?: boolean;
+
+  /**
+   * List of tool types that can call this tool programmatically.
+   */
+  allowed_callers?: string[];
+}
+
+/**
+ * MCP Toolset for connecting MCP servers.
+ * Allows deferring loading for entire servers while keeping specific tools loaded.
+ * Part of Anthropic's advanced tool use beta (advanced-tool-use-2025-11-20).
+ */
+export interface MCPToolset {
+  type: 'mcp_toolset';
+
+  /**
+   * Name of the MCP server to connect to.
+   */
+  mcp_server_name: string;
+
+  /**
+   * Default configuration applied to all tools in this MCP server.
+   */
+  default_config?: MCPToolConfig;
+
+  /**
+   * Per-tool configuration overrides, keyed by tool name.
+   */
+  configs?: Record<string, MCPToolConfig>;
 
   /**
    * Create a cache control breakpoint at this content block.
@@ -597,8 +693,11 @@ export type ToolUnion =
   | ToolBash20250124
   | ToolTextEditor20250124
   | TextEditor20250429
-  | TextEditor20250728
-  | WebSearchTool20250305;
+  | WebSearchTool20250305
+  | ToolSearchToolRegex
+  | ToolSearchToolBM25
+  | CodeExecutionTool
+  | MCPToolset;
 
 /**
  * How the model should use the provided tools. The model can use a specific tool,
@@ -681,20 +780,6 @@ export interface MessageCreateParamsBase {
    * Use nucleus sampling.
    */
   top_p?: number;
-
-  /**
-   * Configuration for output behavior.
-   * - format: Specify JSON schema or other output formats for structured outputs.
-   *   Recommended over output_format for Claude 4.6+ models.
-   * - effort: Control how many tokens Claude uses when responding.
-   *   Supported on Claude Opus 4.6 and Opus 4.5. Levels: 'max' | 'high' | 'medium' | 'low'.
-   *   'max' is only available on Opus 4.6.
-   *   See: https://platform.claude.com/docs/en/build-with-claude/effort
-   */
-  output_config?: {
-    format?: Record<string, unknown>;
-    effort?: 'max' | 'high' | 'medium' | 'low';
-  };
 
   // anthropic specific, maybe move this
   anthropic_beta?: string;

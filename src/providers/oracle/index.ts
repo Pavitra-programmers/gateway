@@ -5,7 +5,6 @@ import {
   OracleChatCompleteResponseTransform,
   OracleChatCompleteStreamChunkTransform,
 } from './chatComplete';
-import { OracleLogConfig } from './pricing';
 
 const OracleConfig: ProviderConfigs = {
   chatComplete: OracleChatCompleteConfig,
@@ -14,7 +13,6 @@ const OracleConfig: ProviderConfigs = {
     chatComplete: OracleChatCompleteResponseTransform,
     'stream-chatComplete': OracleChatCompleteStreamChunkTransform,
   },
-  pricing: OracleLogConfig,
 };
 
 export default OracleConfig;

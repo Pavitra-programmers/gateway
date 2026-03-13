@@ -9,17 +9,15 @@ import {
   SYSTEM_MESSAGE_ROLES,
   MESSAGE_ROLES,
 } from '../../types/requestBody';
-import { getOrGenerateId } from '../../utils/idGenerator';
-import { THOUGHT_SIGNATURE_PREFIX } from '../google-vertex-ai/types';
+import { VERTEX_MODALITY } from '../google-vertex-ai/types';
 import {
   getMimeType,
-  recursivelyDeleteUnsupportedParameters,
-  transformInputAudioPart,
-  transformGeminiToolParameters,
-  transformVertexLogprobs,
-  transformGoogleTools,
   googleTools,
-  getThoughtSignature,
+  recursivelyDeleteUnsupportedParameters,
+  transformGeminiToolParameters,
+  transformGoogleTools,
+  transformInputAudioPart,
+  transformVertexLogprobs,
 } from '../google-vertex-ai/utils';
 import {
   ChatCompletionResponse,
@@ -75,9 +73,11 @@ const transformGenerationConfig = (params: PortkeyGeminiParams) => {
   }
   if (params?.response_format?.type === 'json_schema') {
     generationConfig['responseMimeType'] = 'application/json';
-    generationConfig['responseJsonSchema'] =
+    let schema =
       params?.response_format?.json_schema?.schema ??
       params?.response_format?.json_schema;
+    recursivelyDeleteUnsupportedParameters(schema);
+    generationConfig['responseSchema'] = transformGeminiToolParameters(schema);
   }
   if (params?.thinking) {
     const thinkingConfig: Record<string, any> = {};
@@ -93,32 +93,9 @@ const transformGenerationConfig = (params: PortkeyGeminiParams) => {
     );
   }
   if (params.reasoning_effort && params.reasoning_effort !== 'none') {
-    // Gemini 2.5 models use thinking_config with thinking_budget
-    // Gemini 3.0+ models use thinkingConfig with thinkingLevel
-    const model = params.model as string | undefined;
-    if (model?.includes('gemini-2.5')) {
-      // Map reasoning_effort to thinking_budget for Gemini 2.5 models
-      // Using reasonable defaults based on model limits:
-      // - gemini-2.5-flash: 0-24,576 tokens
-      // - gemini-2.5-pro: 128-32,768 tokens
-      // https://ai.google.dev/gemini-api/docs/openai#thinking
-      const thinkingBudgetMap: Record<string, number> = {
-        minimal: 1024,
-        low: 1024,
-        medium: 8192,
-        high: 24576,
-      };
-      const thinkingBudget = thinkingBudgetMap[params.reasoning_effort] ?? 8192;
-      generationConfig['thinking_config'] = {
-        include_thoughts: true,
-        thinking_budget: thinkingBudget,
-      };
-    } else {
-      // Gemini 3.0+ models use thinkingLevel
-      generationConfig['thinkingConfig'] = {
-        thinkingLevel: params.reasoning_effort,
-      };
-    }
+    generationConfig['thinkingConfig'] = {
+      thinkingLevel: params.reasoning_effort,
+    };
   }
   if (params.image_config) {
     generationConfig['imageConfig'] = {
@@ -129,9 +106,6 @@ const transformGenerationConfig = (params: PortkeyGeminiParams) => {
         imageSize: params.image_config.image_size,
       }),
     };
-  }
-  if (params.media_resolution) {
-    generationConfig['mediaResolution'] = params.media_resolution;
   }
   return generationConfig;
 };
@@ -157,16 +131,31 @@ interface GoogleFunctionResponseMessagePart {
     name: string;
     response: {
       name?: string;
-      content: string;
+      output: string | ContentType[];
     };
   };
 }
 
-type GoogleMessagePart =
+export type GoogleMessagePart =
   | GoogleFunctionCallMessagePart
   | GoogleFunctionResponseMessagePart
+  | GoogleInlineDataMessagePart
+  | GoogleFileDataMessagePart
   | { text: string };
 
+export interface GoogleInlineDataMessagePart {
+  inlineData: {
+    mimeType?: string;
+    data: string;
+  };
+}
+
+export interface GoogleFileDataMessagePart {
+  fileData: {
+    mimeType?: string;
+    fileUri: string;
+  };
+}
 export interface GoogleMessage {
   role: GoogleMessageRole;
   parts: GoogleMessagePart[];
@@ -251,44 +240,25 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
 
           if (message.role === 'assistant' && message.tool_calls) {
             message.tool_calls.forEach((tool_call: ToolCall) => {
-              const thought_signature = getThoughtSignature(
-                params.model,
-                tool_call.function.thought_signature
-              );
               parts.push({
                 functionCall: {
                   name: tool_call.function.name,
                   args: JSON.parse(tool_call.function.arguments),
                 },
-                ...(thought_signature && {
-                  thoughtSignature: thought_signature,
+                ...(tool_call.function.thought_signature && {
+                  thoughtSignature: tool_call.function.thought_signature,
                 }),
               });
             });
           } else if (message.role === 'tool') {
-            const toolName = message.name ?? 'gateway-tool-filler-name';
-            // OpenAI: tool message content is string or array of text parts (type "text").
-            if (typeof message.content === 'string') {
-              parts.push({
-                functionResponse: {
-                  name: toolName,
-                  response: {
-                    content: message.content,
-                  },
+            parts.push({
+              functionResponse: {
+                name: message.name ?? 'gateway-tool-filler-name',
+                response: {
+                  output: message.content ?? '',
                 },
-              });
-            } else if (Array.isArray(message.content)) {
-              (message.content as ContentType[]).forEach((part) => {
-                parts.push({
-                  functionResponse: {
-                    name: toolName,
-                    response: {
-                      content: part.text,
-                    },
-                  },
-                });
-              });
-            }
+              },
+            });
           } else if (message.content && typeof message.content === 'object') {
             message.content.forEach((c: ContentType) => {
               if (c.type === 'text') {
@@ -298,11 +268,7 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
               } else if (c.type === 'input_audio') {
                 parts.push(transformInputAudioPart(c));
               } else if (c.type === 'image_url') {
-                const {
-                  url,
-                  mime_type: passedMimeType,
-                  media_resolution,
-                } = c.image_url || {};
+                const { url, mime_type: passedMimeType } = c.image_url || {};
                 if (!url) return;
 
                 if (url.startsWith('data:')) {
@@ -315,9 +281,6 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
                       mimeType: mimeType,
                       data: base64Image,
                     },
-                    ...(media_resolution && {
-                      mediaResolution: media_resolution,
-                    }),
                   });
                 } else if (
                   url.startsWith('gs://') ||
@@ -329,9 +292,6 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
                       mimeType: passedMimeType || getMimeType(url),
                       fileUri: url,
                     },
-                    ...(media_resolution && {
-                      mediaResolution: media_resolution,
-                    }),
                   });
                 } else {
                   // NOTE: This block is kept to maintain backward compatibility
@@ -341,9 +301,6 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
                       mimeType: 'image/jpeg',
                       data: c.image_url?.url,
                     },
-                    ...(media_resolution && {
-                      mediaResolution: media_resolution,
-                    }),
                   });
                 }
               }
@@ -458,20 +415,19 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
       const functionDeclarations: any = [];
       const tools: any = [];
       params.tools?.forEach((tool) => {
-        if (tool.type === 'function') {
-          if (googleTools.includes(tool.function?.name)) {
+        if (tool.type === 'function' && tool.function) {
+          // these are not supported by google
+          recursivelyDeleteUnsupportedParameters(tool.function?.parameters);
+          delete tool.function?.strict;
+          if (googleTools.includes(tool.function.name)) {
             tools.push(...transformGoogleTools(tool));
           } else {
-            if (tool.function) {
-              const transformedParameters = transformGeminiToolParameters(
-                tool.function.parameters || {}
+            if (tool.function?.parameters) {
+              tool.function.parameters = transformGeminiToolParameters(
+                tool.function.parameters
               );
-              tool.function.parameters = recursivelyDeleteUnsupportedParameters(
-                transformedParameters
-              );
-              delete tool.function.strict;
-              functionDeclarations.push(tool.function);
             }
+            functionDeclarations.push(tool.function);
           }
         }
       });
@@ -497,6 +453,7 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
       }
       return;
     },
+    required: true,
     transform: (params: Params) => {
       const toolConfig = {} as GoogleToolConfig;
       if (params.tool_choice) {
@@ -505,7 +462,7 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
           typeof params.tool_choice === 'object' &&
           params.tool_choice.type === 'function'
         ) {
-          allowedFunctionNames.push(params.tool_choice.function?.name);
+          allowedFunctionNames.push(params.tool_choice.function.name);
         }
         toolConfig.function_calling_config = {
           mode: transformToolChoiceForGemini(params.tool_choice),
@@ -514,17 +471,17 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
           toolConfig.function_calling_config.allowed_function_names =
             allowedFunctionNames;
         }
-        const googleMapsTool = params.tools?.find(
-          (tool) =>
-            tool.function?.name === 'googleMaps' ||
-            tool.function?.name === 'google_maps'
-        );
-        if (googleMapsTool) {
-          toolConfig.retrievalConfig =
-            googleMapsTool.function?.parameters?.retrievalConfig;
-        }
-        return toolConfig;
       }
+      const googleMapsTool = params.tools?.find(
+        (tool) =>
+          tool.function?.name === 'googleMaps' ||
+          tool.function?.name === 'google_maps'
+      );
+      if (googleMapsTool) {
+        toolConfig.retrievalConfig =
+          googleMapsTool.function?.parameters?.retrievalConfig;
+      }
+      return toolConfig;
     },
   },
   thinking: {
@@ -547,14 +504,6 @@ export const GoogleChatCompleteConfig: ProviderConfig = {
     param: 'generationConfig',
     transform: (params: Params) => transformGenerationConfig(params),
   },
-  // https://ai.google.dev/gemini-api/docs/media-resolution
-  media_resolution: {
-    param: 'generationConfig',
-    transform: (params: Params) => transformGenerationConfig(params),
-  },
-  cached_content: {
-    param: 'cachedContent',
-  },
 };
 
 export interface GoogleErrorResponse {
@@ -571,9 +520,9 @@ interface GoogleGenerateFunctionCall {
   args: Record<string, any>;
 }
 
-interface GoogleResponseCandidate {
-  content?: {
-    parts?: {
+export interface GoogleResponseCandidate {
+  content: {
+    parts: {
       text?: string;
       thought?: string; // for models like gemini-2.0-flash-thinking-exp refer: https://ai.google.dev/gemini-api/docs/thinking-mode#streaming_model_thinking
       functionCall?: GoogleGenerateFunctionCall;
@@ -603,7 +552,6 @@ interface GoogleResponseCandidate {
     ];
   };
   finishReason: GOOGLE_GENERATE_CONTENT_FINISH_REASON;
-  finishMessage?: string; // Contains error details for MALFORMED_FUNCTION_CALL and similar finish reasons
   index: 0;
   safetyRatings: {
     category: string;
@@ -627,6 +575,14 @@ interface GoogleGenerateContentResponse {
     totalTokenCount: number;
     thoughtsTokenCount?: number;
     cachedContentTokenCount?: number;
+    promptTokensDetails: {
+      modality: VERTEX_MODALITY;
+      tokenCount: number;
+    }[];
+    candidatesTokensDetails: {
+      modality: VERTEX_MODALITY;
+      tokenCount: number;
+    }[];
   };
 }
 
@@ -670,16 +626,24 @@ export const GoogleChatCompleteResponseTransform: (
   if ('candidates' in response) {
     const {
       promptTokenCount = 0,
-      cachedContentTokenCount = 0,
       candidatesTokenCount = 0,
       totalTokenCount = 0,
       thoughtsTokenCount = 0,
+      cachedContentTokenCount = 0,
+      promptTokensDetails = [],
+      candidatesTokensDetails = [],
     } = response.usageMetadata;
-
-    const completionTokens = candidatesTokenCount + thoughtsTokenCount;
+    const inputAudioTokens = promptTokensDetails.reduce((acc, curr) => {
+      if (curr.modality === VERTEX_MODALITY.AUDIO) return acc + curr.tokenCount;
+      return acc;
+    }, 0);
+    const outputAudioTokens = candidatesTokensDetails.reduce((acc, curr) => {
+      if (curr.modality === VERTEX_MODALITY.AUDIO) return acc + curr.tokenCount;
+      return acc;
+    }, 0);
 
     return {
-      id: getOrGenerateId(undefined, 'chatCompletion'),
+      id: 'portkey-' + crypto.randomUUID(),
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
       model: response.modelVersion,
@@ -693,7 +657,7 @@ export const GoogleChatCompleteResponseTransform: (
           for (const part of generation.content?.parts ?? []) {
             if (part.functionCall) {
               toolCalls.push({
-                id: getOrGenerateId(undefined, 'toolCall'),
+                id: 'portkey-' + crypto.randomUUID(),
                 type: 'function',
                 function: {
                   name: part.functionCall.name,
@@ -719,16 +683,6 @@ export const GoogleChatCompleteResponseTransform: (
                 },
               });
             }
-          }
-
-          // Handle cases where content is empty (e.g., MALFORMED_FUNCTION_CALL)
-          // If no content was extracted but finishMessage is available, use it as content
-          if (
-            content === undefined &&
-            toolCalls.length === 0 &&
-            generation.finishMessage
-          ) {
-            content = generation.finishMessage;
           }
 
           const message = {
@@ -761,13 +715,15 @@ export const GoogleChatCompleteResponseTransform: (
         }) ?? [],
       usage: {
         prompt_tokens: promptTokenCount,
-        completion_tokens: completionTokens,
+        completion_tokens: candidatesTokenCount,
         total_tokens: totalTokenCount,
         completion_tokens_details: {
           reasoning_tokens: thoughtsTokenCount,
+          audio_tokens: outputAudioTokens,
         },
         prompt_tokens_details: {
           cached_tokens: cachedContentTokenCount,
+          audio_tokens: inputAudioTokens,
         },
       },
     };
@@ -810,24 +766,32 @@ export const GoogleChatCompleteStreamChunkTransform: (
 
   let usageMetadata;
   if (parsedChunk.usageMetadata) {
-    const {
-      promptTokenCount = 0,
-      cachedContentTokenCount = 0,
-      candidatesTokenCount = 0,
-      totalTokenCount = 0,
-      thoughtsTokenCount = 0,
-    } = parsedChunk.usageMetadata;
-    const completionTokens = candidatesTokenCount + thoughtsTokenCount;
-
     usageMetadata = {
-      prompt_tokens: promptTokenCount,
-      completion_tokens: completionTokens,
-      total_tokens: totalTokenCount,
+      prompt_tokens: parsedChunk.usageMetadata.promptTokenCount,
+      completion_tokens: parsedChunk.usageMetadata.candidatesTokenCount,
+      total_tokens: parsedChunk.usageMetadata.totalTokenCount,
       completion_tokens_details: {
-        reasoning_tokens: thoughtsTokenCount,
+        reasoning_tokens: parsedChunk.usageMetadata.thoughtsTokenCount ?? 0,
+        audio_tokens:
+          parsedChunk.usageMetadata?.candidatesTokensDetails?.reduce(
+            (acc, curr) => {
+              if (curr.modality === VERTEX_MODALITY.AUDIO)
+                return acc + curr.tokenCount;
+              return acc;
+            },
+            0
+          ),
       },
       prompt_tokens_details: {
-        cached_tokens: cachedContentTokenCount,
+        cached_tokens: parsedChunk.usageMetadata.cachedContentTokenCount,
+        audio_tokens: parsedChunk.usageMetadata?.promptTokensDetails?.reduce(
+          (acc, curr) => {
+            if (curr.modality === VERTEX_MODALITY.AUDIO)
+              return acc + curr.tokenCount;
+            return acc;
+          },
+          0
+        ),
       },
     };
   }
@@ -848,7 +812,7 @@ export const GoogleChatCompleteStreamChunkTransform: (
                 strictOpenAiCompliance
               )
             : null;
-          if (generation.content?.parts?.[0]?.text) {
+          if (generation.content?.parts[0]?.text) {
             const contentBlocks = [];
             let content = '';
             for (const part of generation.content.parts) {
@@ -872,14 +836,14 @@ export const GoogleChatCompleteStreamChunkTransform: (
               ...(!strictOpenAiCompliance &&
                 contentBlocks.length && { content_blocks: contentBlocks }),
             };
-          } else if (generation.content?.parts?.[0]?.functionCall) {
+          } else if (generation.content?.parts[0]?.functionCall) {
             message = {
               role: 'assistant',
               tool_calls: generation.content.parts.map((part, idx) => {
                 if (part.functionCall) {
                   return {
                     index: idx,
-                    id: getOrGenerateId(undefined, 'toolCall'),
+                    id: 'portkey-' + crypto.randomUUID(),
                     type: 'function',
                     function: {
                       name: part.functionCall.name,
@@ -893,7 +857,7 @@ export const GoogleChatCompleteStreamChunkTransform: (
                 }
               }),
             };
-          } else if (generation.content?.parts?.[0]?.inlineData) {
+          } else if (generation.content?.parts[0]?.inlineData) {
             const part = generation.content.parts[0];
             const contentBlocks = [
               {
@@ -909,12 +873,6 @@ export const GoogleChatCompleteStreamChunkTransform: (
             message = {
               role: 'assistant',
               content_blocks: contentBlocks,
-            };
-          } else if (generation.finishMessage) {
-            // Handle cases where content is empty (e.g., MALFORMED_FUNCTION_CALL)
-            message = {
-              role: 'assistant',
-              content: generation.finishMessage,
             };
           }
           return {

@@ -1,4 +1,5 @@
 import { Context } from 'hono';
+import { constructConfigFromRequestHeaders } from './handlerUtils';
 import { ProviderAPIConfig } from '../providers/types';
 import Providers from '../providers';
 import { Options } from '../types/requestBody';
@@ -7,8 +8,7 @@ import {
   getOptionsForOutgoingConnection,
   getURLForOutgoingConnection,
 } from './websocketUtils';
-import { constructConfigFromRequestHeaders } from '../utils/request';
-import { RealTimeLLMEventParser } from '../services/realtimeLLMEventParser';
+import { RealtimeLlmEventParser } from '../services/realtimeLlmEventParser';
 
 const getOutgoingWebSocket = async (url: string, options: RequestInit) => {
   let outgoingWebSocket: WebSocket | null = null;
@@ -29,23 +29,17 @@ const getOutgoingWebSocket = async (url: string, options: RequestInit) => {
 
 export async function realTimeHandler(c: Context): Promise<Response> {
   try {
-    const requestHeaders = c.get('mappedHeaders');
+    const requestHeaders = Object.fromEntries(c.req.raw.headers);
 
     const providerOptions = constructConfigFromRequestHeaders(
       requestHeaders
     ) as Options;
-    const urlObject = new URL(c.req.url);
-    const model = urlObject.searchParams.get('model');
-    if (model && model.startsWith('@')) {
-      urlObject.searchParams.set('model', model.replace(/@[^/]+\//, ''));
-    }
-    const incomingUrl = urlObject.toString();
     const provider = providerOptions.provider ?? '';
     const apiConfig: ProviderAPIConfig = Providers[provider].api;
     const url = getURLForOutgoingConnection(
       apiConfig,
       providerOptions,
-      incomingUrl,
+      c.req.url,
       c
     );
     const options = await getOptionsForOutgoingConnection(
@@ -73,7 +67,10 @@ export async function realTimeHandler(c: Context): Promise<Response> {
     server.accept();
 
     let outgoingWebSocket: WebSocket = await getOutgoingWebSocket(url, options);
-    const eventParser = new RealTimeLLMEventParser();
+    
+    // Import realtimeEventLogger and pass it directly to the parser
+    const { realtimeEventLogger } = await import('../services/realtimeEventLogger.js');
+    const eventParser = new RealtimeLlmEventParser(realtimeEventLogger);
     addListeners(outgoingWebSocket, eventParser, server, c, sessionOptions);
 
     return new Response(null, {

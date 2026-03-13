@@ -6,7 +6,6 @@ import {
   GoogleErrorResponseTransform,
 } from './chatComplete';
 import { generateInvalidProviderResponseError } from '../utils';
-import { Params } from '../../types/requestBody';
 
 export const GoogleEmbedConfig: ProviderConfig = {
   input: {
@@ -65,7 +64,8 @@ export const GoogleEmbedResponseTransform: (
     );
     if (errorResposne) return errorResposne;
   }
-  const model = gatewayRequest.model || '';
+
+  const model = (gatewayRequest.model as string) || '';
 
   if ('embedding' in response) {
     return {

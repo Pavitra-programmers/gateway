@@ -1,5 +1,5 @@
 import { TOGETHER_AI } from '../../globals';
-import { Message, Params } from '../../types/requestBody';
+import { Params } from '../../types/requestBody';
 import {
   ChatCompletionResponse,
   ErrorResponse,
@@ -25,7 +25,7 @@ export const TogetherAIChatCompleteConfig: ProviderConfig = {
     required: true,
     default: '',
     transform: (params: Params) => {
-      return params.messages?.map((message: Message) => {
+      return params.messages?.map((message) => {
         if (message.role === 'developer') return { ...message, role: 'system' };
         return message;
       });
@@ -73,37 +73,9 @@ export const TogetherAIChatCompleteConfig: ProviderConfig = {
   response_format: {
     param: 'response_format',
   },
-  reasoning_effort: {
-    param: 'reasoning_effort',
-  },
 };
 
-interface TogetherAIMessage {
-  role: string;
-  content: string;
-  reasoning?: string;
-  tool_calls?: {
-    id: string;
-    type: string;
-    function: {
-      name: string;
-      arguments: string;
-    };
-  }[];
-}
-
-interface TogetherAIChoice {
-  index: number;
-  message: TogetherAIMessage;
-  finish_reason: TOGETHER_AI_FINISH_REASON;
-}
-
-export interface TogetherAIChatCompleteResponse {
-  id: string;
-  object: string;
-  created: number;
-  model: string;
-  choices: TogetherAIChoice[];
+export interface TogetherAIChatCompleteResponse extends ChatCompletionResponse {
   usage: {
     prompt_tokens: number;
     completion_tokens: number;
@@ -131,8 +103,7 @@ export interface TogetherAIChatCompletionStreamChunk {
   choices: {
     index: number;
     delta: {
-      content?: string;
-      reasoning?: string;
+      content: string;
     };
     finish_reason: TOGETHER_AI_FINISH_REASON;
   }[];
@@ -182,12 +153,16 @@ export const TogetherAIChatCompleteResponseTransform: (
     | TogetherAIOpenAICompatibleErrorResponse,
   responseStatus: number,
   responseHeaders: Headers,
-  strictOpenAiCompliance: boolean
+  strictOpenAiCompliance: boolean,
+  gatewayRequestUrl: string,
+  gatewayRequest: Params
 ) => ChatCompletionResponse | ErrorResponse = (
   response,
   responseStatus,
   _responseHeaders,
-  strictOpenAiCompliance
+  strictOpenAiCompliance,
+  _gatewayRequestUrl,
+  _gatewayRequest
 ) => {
   if (responseStatus !== 200) {
     const errorResponse = TogetherAIErrorResponseTransform(
@@ -204,27 +179,10 @@ export const TogetherAIChatCompleteResponseTransform: (
       model: response.model,
       provider: TOGETHER_AI,
       choices: response.choices.map((choice) => {
-        const content_blocks = [];
-
-        if (!strictOpenAiCompliance) {
-          if (choice.message.reasoning) {
-            content_blocks.push({
-              type: 'thinking',
-              thinking: choice.message.reasoning,
-            });
-          }
-
-          content_blocks.push({
-            type: 'text',
-            text: choice.message.content,
-          });
-        }
-
         return {
           message: {
             role: 'assistant',
             content: choice.message.content,
-            ...(content_blocks.length && { content_blocks }),
             tool_calls: choice.message.tool_calls
               ? choice.message.tool_calls.map((toolCall: any) => ({
                   id: toolCall.id,
@@ -233,7 +191,7 @@ export const TogetherAIChatCompleteResponseTransform: (
                 }))
               : null,
           },
-          index: choice.index,
+          index: 0,
           logprobs: null,
           finish_reason: transformFinishReason(
             choice.finish_reason as TOGETHER_AI_FINISH_REASON,
@@ -256,12 +214,14 @@ export const TogetherAIChatCompleteStreamChunkTransform: (
   response: string,
   fallbackId: string,
   streamState: any,
-  strictOpenAiCompliance: boolean
+  strictOpenAiCompliance: boolean,
+  gatewayRequest: Params
 ) => string = (
   responseChunk,
   fallbackId,
   streamState,
-  strictOpenAiCompliance
+  strictOpenAiCompliance,
+  gatewayRequest
 ) => {
   let chunk = responseChunk.trim();
   chunk = chunk.replace(/^data: /, '');
@@ -276,29 +236,6 @@ export const TogetherAIChatCompleteStreamChunkTransform: (
         strictOpenAiCompliance
       )
     : null;
-
-  const content_blocks = [];
-  if (!strictOpenAiCompliance) {
-    // Add reasoning first
-    if (parsedChunk.choices?.[0]?.delta?.reasoning) {
-      content_blocks.push({
-        index: parsedChunk.choices?.[0]?.index,
-        delta: {
-          thinking: parsedChunk.choices?.[0]?.delta?.reasoning,
-        },
-      });
-    }
-    // Then add content
-    if (parsedChunk.choices?.[0]?.delta?.content) {
-      content_blocks.push({
-        index: parsedChunk.choices?.[0]?.index,
-        delta: {
-          text: parsedChunk.choices?.[0]?.delta?.content,
-        },
-      });
-    }
-  }
-
   return (
     `data: ${JSON.stringify({
       id: parsedChunk.id,
@@ -309,10 +246,9 @@ export const TogetherAIChatCompleteStreamChunkTransform: (
       choices: [
         {
           delta: {
-            content: parsedChunk.choices[0]?.delta?.content,
-            ...(content_blocks.length && { content_blocks }),
+            content: parsedChunk.choices[0]?.delta.content,
           },
-          index: parsedChunk.choices?.[0]?.index ?? 0,
+          index: 0,
           finish_reason: finishReason,
         },
       ],

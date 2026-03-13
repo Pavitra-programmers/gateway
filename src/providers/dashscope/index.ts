@@ -6,7 +6,6 @@ import {
 } from '../open-ai-base';
 import { ProviderConfigs } from '../types';
 import { dashscopeAPIConfig } from './api';
-import { DashscopeLogConfig } from './pricing';
 
 export const DashScopeConfig: ProviderConfigs = {
   chatComplete: chatCompleteParams(
@@ -39,5 +38,4 @@ export const DashScopeConfig: ProviderConfigs = {
     chatComplete: true,
     embed: true,
   }),
-  pricing: DashscopeLogConfig,
 };

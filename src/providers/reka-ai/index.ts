@@ -4,7 +4,6 @@ import {
   RekaAIChatCompleteConfig,
   RekaAIChatCompleteResponseTransform,
 } from './chatComplete';
-import { RekaLogConfig } from './pricing';
 
 const RekaAIConfig: ProviderConfigs = {
   chatComplete: RekaAIChatCompleteConfig,
@@ -12,7 +11,6 @@ const RekaAIConfig: ProviderConfigs = {
   responseTransforms: {
     chatComplete: RekaAIChatCompleteResponseTransform,
   },
-  pricing: RekaLogConfig,
 };
 
 export default RekaAIConfig;

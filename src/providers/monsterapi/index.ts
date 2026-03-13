@@ -4,7 +4,6 @@ import {
   MonsterAPIChatCompleteConfig,
   MonsterAPIChatCompleteResponseTransform,
 } from './chatComplete';
-import { MonsterAPILogConfig } from './pricing';
 
 const MonsterAPIConfig: ProviderConfigs = {
   api: MonsterAPIApiConfig,
@@ -12,7 +11,6 @@ const MonsterAPIConfig: ProviderConfigs = {
   responseTransforms: {
     chatComplete: MonsterAPIChatCompleteResponseTransform,
   },
-  pricing: MonsterAPILogConfig,
 };
 
 export default MonsterAPIConfig;

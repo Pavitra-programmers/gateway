@@ -7,7 +7,6 @@ import {
   MistralAIChatCompleteConfig,
 } from './chatComplete';
 import { MistralAIEmbedConfig, MistralAIEmbedResponseTransform } from './embed';
-import { MistralAiLogConfig } from './pricing';
 
 const MistralAIConfig: ProviderConfigs = {
   chatComplete: MistralAIChatCompleteConfig,
@@ -19,7 +18,6 @@ const MistralAIConfig: ProviderConfigs = {
       GetMistralAIChatCompleteStreamChunkTransform(MISTRAL_AI),
     embed: MistralAIEmbedResponseTransform,
   },
-  pricing: MistralAiLogConfig,
 };
 
 export default MistralAIConfig;

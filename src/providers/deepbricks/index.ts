@@ -8,7 +8,6 @@ import {
   DeepbricksImageGenerateConfig,
   DeepbricksImageGenerateResponseTransform,
 } from './imageGenerate';
-import { deepbricksConfig } from './pricing';
 
 const DeepbricksConfig: ProviderConfigs = {
   api: DeepbricksAPIConfig,
@@ -18,7 +17,6 @@ const DeepbricksConfig: ProviderConfigs = {
     chatComplete: DeepbricksChatCompleteResponseTransform,
     imageGenerate: DeepbricksImageGenerateResponseTransform,
   },
-  pricing: deepbricksConfig,
 };
 
 export default DeepbricksConfig;
