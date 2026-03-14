@@ -2,7 +2,6 @@
   "plugins_enabled": [
     "default",
     "portkey",
-    "qualifire",
     "aporia",
     "sydelabs",
     "pillar",
@@ -11,7 +10,9 @@
     "promptsecurity",
     "panw-prisma-airs",
     "walledai",
-    "akto"
+    "akto",
+    "zscaler",
+    "lasso"
   ],
   "credentials": {
     "portkey": {
