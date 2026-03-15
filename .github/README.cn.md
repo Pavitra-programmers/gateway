@@ -9,7 +9,7 @@
 
 ### 通过一个快速友好的API链接超过100个大型语言模型。
 
-[![License](https://img.shields.io/github/license/Ileriayo/markdown-badges)](./LICENSE)
+[![License](https://img.shields.io/github/license/Ileriayo/markdown-badges)](../LICENSE)
 [![Discord](https://img.shields.io/discord/1143393887742861333)](https://portkey.ai/community)
 [![Twitter](https://img.shields.io/twitter/url/https/twitter/follow/portkeyai?style=social&label=Follow%20%40PortkeyAI)](https://twitter.com/portkeyai)
 [![npm version](https://badge.fury.io/js/%40portkey-ai%2Fgateway.svg)](https://www.npmjs.com/package/@portkey-ai/gateway)
