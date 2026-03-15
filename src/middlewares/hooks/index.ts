@@ -570,6 +570,9 @@ export class HooksManager {
         'createBatch',
         'createFinetune',
         'createModelResponse',
+        'createTranscription',
+        'createTranslation',
+        'createSpeech',
       ].includes(context.requestType) ||
       (context.requestType === 'embed' &&
         hook.eventType !== 'beforeRequestHook') ||

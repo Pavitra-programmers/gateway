@@ -78,6 +78,8 @@ import AIBadgrConfig from './aibadgr';
 import OVHcloudConfig from './ovhcloud';
 import DatabricksConfig from './databricks';
 import PineconeConfig from './pinecone';
+import ElevenLabsConfig from './elevenlabs';
+import DeepgramConfig from './deepgram';
 
 const Providers: { [key: string]: ProviderConfigs } = {
   openai: OpenAIConfig,
@@ -155,6 +157,8 @@ const Providers: { [key: string]: ProviderConfigs } = {
   ovhcloud: OVHcloudConfig,
   databricks: DatabricksConfig,
   pinecone: PineconeConfig,
+  elevenlabs: ElevenLabsConfig,
+  deepgram: DeepgramConfig,
 };
 
 /**
