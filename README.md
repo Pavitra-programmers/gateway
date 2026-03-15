@@ -93,11 +93,11 @@ Options:
 <sup>
 Deployment guides:
 &nbsp; <a href="https://portkey.wiki/gh-18"><img height="12" width="12" src="https://cfassets.portkey.ai/logo/dew-color.svg" /> Portkey Cloud (Recommended)</a>
-&nbsp; <a href="./docs/installation-deployments.md#docker"><img height="12" width="12" src="https://cdn.simpleicons.org/docker/3776AB" /> Docker</a>
-&nbsp; <a href="./docs/installation-deployments.md#nodejs-server"><img height="12" width="12" src="https://cdn.simpleicons.org/node.js/3776AB" /> Node.js</a>
-&nbsp; <a href="./docs/installation-deployments.md#cloudflare-workers"><img height="12" width="12" src="https://cdn.simpleicons.org/cloudflare/3776AB" /> Cloudflare</a>
-&nbsp; <a href="./docs/installation-deployments.md#replit"><img height="12" width="12" src="https://cdn.simpleicons.org/replit/3776AB" /> Replit</a>
-&nbsp; <a href="./docs/installation-deployments.md"> Others...</a>
+&nbsp; <a href="https://github.com/Portkey-AI/gateway/blob/main/docs/installation-deployments.md#docker"><img height="12" width="12" src="https://cdn.simpleicons.org/docker/3776AB" /> Docker</a>
+&nbsp; <a href="https://github.com/Portkey-AI/gateway/blob/main/docs/installation-deployments.md#nodejs-server"><img height="12" width="12" src="https://cdn.simpleicons.org/node.js/3776AB" /> Node.js</a>
+&nbsp; <a href="https://github.com/Portkey-AI/gateway/blob/main/docs/installation-deployments.md#cloudflare-workers"><img height="12" width="12" src="https://cdn.simpleicons.org/cloudflare/3776AB" /> Cloudflare</a>
+&nbsp; <a href="https://github.com/Portkey-AI/gateway/blob/main/docs/installation-deployments.md#replit"><img height="12" width="12" src="https://cdn.simpleicons.org/replit/3776AB" /> Replit</a>
+&nbsp; <a href="https://github.com/Portkey-AI/gateway/blob/main/docs/installation-deployments.md"> Others...</a>
 
 </sup>
 
@@ -129,7 +129,7 @@ client.chat.completions.create(
 &nbsp; [<img height="12" width="12" src="https://cdn.simpleicons.org/javascript/3776AB" /> JS](https://portkey.wiki/gh-19)
 &nbsp; [<img height="12" width="12" src="https://cdn.simpleicons.org/python/3776AB" /> Python](https://portkey.wiki/gh-20)
 &nbsp; [<img height="12" width="12" src="https://cdn.simpleicons.org/gnubash/3776AB" /> REST](https://portkey.sh/gh-84)
-&nbsp; [<img height="12" width="12" src="https://cdn.simpleicons.org/openai/3776AB" /> OpenAI SDKs](https://portkey.wiki/gh-21)
+&nbsp; [OpenAI SDKs](https://portkey.wiki/gh-21)
 &nbsp; [<img height="12" width="12" src="https://cdn.simpleicons.org/langchain/3776AB" /> Langchain](https://portkey.wiki/gh-22)
 &nbsp; [LlamaIndex](https://portkey.wiki/gh-23)
 &nbsp; [Autogen](https://portkey.wiki/gh-24)
@@ -212,7 +212,7 @@ Works with Claude Desktop, Cursor, VS Code, and any MCP-compatible client. [Get 
 - <a href="https://portkey.wiki/gh-39">**Load Balancing**</a>: Distribute LLM requests across multiple API keys or AI providers with weights to ensure high availability and optimal performance.
 - <a href="https://portkey.wiki/gh-40">**Request Timeouts**</a>: Manage unruly LLMs & latencies by setting up granular request timeouts, allowing automatic termination of requests that exceed a specified duration.
 - <a href="https://portkey.wiki/gh-41">**Multi-modal LLM Gateway**</a>: Call vision, audio (text-to-speech & speech-to-text), and image generation models from multiple providers  — all using the familiar OpenAI signature
-- <a href="https://portkey.wiki/gh-42">**Realtime APIs**</a>: Call realtime APIs launched by OpenAI through the integrate websockets server.
+- **Realtime APIs**: Call realtime APIs launched by OpenAI through the integrate websockets server.
 
 ### Security & Accuracy
 - <a href="https://portkey.wiki/gh-88">**Guardrails**</a>: Verify your LLM inputs and outputs to adhere to your specified checks. Choose from the 40+ pre-built guardrails to ensure compliance with security and accuracy standards. You can <a href="https://portkey.wiki/gh-43">bring your own guardrails</a> or choose from our <a href="https://portkey.wiki/gh-44">many partners</a>.
@@ -279,19 +279,19 @@ Explore Gateway integrations with [45+ providers](https://portkey.wiki/gh-59) an
 
 |                                                                                                                            | Provider                                                                                      | Support | Stream |
 | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------- | ------ |
-| <img src="docs/images/openai.png" width=35 />                                                                              | [OpenAI](https://portkey.wiki/gh-60)                           | ✅       | ✅      |
-| <img src="docs/images/azure.png" width=35>                                                                                 | [Azure OpenAI](https://portkey.wiki/gh-61)               | ✅       | ✅      |
-| <img src="docs/images/anyscale.png" width=35>                                                                              | [Anyscale](https://portkey.wiki/gh-62) | ✅       | ✅      |
+| | [OpenAI](https://portkey.wiki/gh-60)                           | ✅       | ✅      |
+| | [Azure OpenAI](https://portkey.wiki/gh-61)               | ✅       | ✅      |
+| | [Anyscale](https://portkey.wiki/gh-62) | ✅       | ✅      |
 | <img src="https://upload.wikimedia.org/wikipedia/commons/2/2d/Google-favicon-2015.png" width=35>                           | [Google Gemini](https://portkey.wiki/gh-63)             | ✅       | ✅      |
-| <img src="docs/images/anthropic.png" width=35>                                                                             | [Anthropic](https://portkey.wiki/gh-64)                     | ✅       | ✅      |
-| <img src="docs/images/cohere.png" width=35>                                                                                | [Cohere](https://portkey.wiki/gh-65)                           | ✅       | ✅      |
+| | [Anthropic](https://portkey.wiki/gh-64)                     | ✅       | ✅      |
+| | [Cohere](https://portkey.wiki/gh-65)                           | ✅       | ✅      |
 | <img src="https://assets-global.website-files.com/64f6f2c0e3f4c5a91c1e823a/654693d569494912cfc0c0d4_favicon.svg" width=35> | [Together AI](https://portkey.wiki/gh-66)                 | ✅       | ✅      |
 | <img src="https://www.perplexity.ai/favicon.svg" width=35>                                                                 | [Perplexity](https://portkey.wiki/gh-67)                | ✅       | ✅      |
 | <img src="https://docs.mistral.ai/img/favicon.ico" width=35>                                                               | [Mistral](https://portkey.wiki/gh-68)                      | ✅       | ✅      |
 | <img src="https://docs.nomic.ai/img/nomic-logo.png" width=35>                                                              | [Nomic](https://portkey.wiki/gh-69)                             | ✅       | ✅      |
 | <img src="https://files.readme.io/d38a23e-small-studio-favicon.png" width=35>                                              | [AI21](https://portkey.wiki/gh-91)                                    | ✅       | ✅      |
 | <img src="https://platform.stability.ai/small-logo-purple.svg" width=35>                                                   | [Stability AI](https://portkey.wiki/gh-71)               | ✅       | ✅      |
-| <img src="https://deepinfra.com/_next/static/media/logo.4a03fd3d.svg" width=35>                                            | [DeepInfra](https://portkey.sh/gh-92)                               | ✅       | ✅      |
+| | [DeepInfra](https://portkey.sh/gh-92)                               | ✅       | ✅      |
 | <img src="https://ollama.com/public/ollama.png" width=35>                                                                  | [Ollama](https://portkey.wiki/gh-72)                           | ✅       | ✅      |
 | <img src="https://novita.ai/favicon.ico" width=35>                                                                         | [Novita AI](https://portkey.wiki/gh-73)                              | ✅       | ✅      | `/chat/completions`, `/completions` |
 

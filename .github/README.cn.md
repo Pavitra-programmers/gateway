@@ -35,14 +35,14 @@ npx @portkey-ai/gateway
 <sup>
 [ 其它部署选项 ]
 &nbsp; <a href="https://portkey.wiki/gh-18"><img height="12" width="12" src="https://cfassets.portkey.ai/logo/dew-color.svg" /> Portkey Cloud 官方部署(推荐)</a>
-&nbsp; <a href="../docs/installation-deployments.md#docker"><img height="12" width="12" src="https://cdn.simpleicons.org/docker/3776AB" /> Docker</a>
-&nbsp; <a href="../docs/installation-deployments.md#nodejs-server"><img height="12" width="12" src="https://cdn.simpleicons.org/node.js/3776AB" /> Node.js</a>
-&nbsp; <a href="../docs/installation-deployments.md#cloudflare-workers"><img height="12" width="12" src="https://cdn.simpleicons.org/cloudflare/3776AB" /> Cloudflare</a>
-&nbsp; <a href="../docs/installation-deployments.md#replit"><img height="12" width="12" src="https://cdn.simpleicons.org/replit/3776AB" /> Replit</a>
-&nbsp; <a href="../docs/installation-deployments.md"> 其它...</a>
+&nbsp; <a href="https://github.com/Portkey-AI/gateway/blob/main/docs/installation-deployments.md#docker"><img height="12" width="12" src="https://cdn.simpleicons.org/docker/3776AB" /> Docker</a>
+&nbsp; <a href="https://github.com/Portkey-AI/gateway/blob/main/docs/installation-deployments.md#nodejs-server"><img height="12" width="12" src="https://cdn.simpleicons.org/node.js/3776AB" /> Node.js</a>
+&nbsp; <a href="https://github.com/Portkey-AI/gateway/blob/main/docs/installation-deployments.md#cloudflare-workers"><img height="12" width="12" src="https://cdn.simpleicons.org/cloudflare/3776AB" /> Cloudflare</a>
+&nbsp; <a href="https://github.com/Portkey-AI/gateway/blob/main/docs/installation-deployments.md#replit"><img height="12" width="12" src="https://cdn.simpleicons.org/replit/3776AB" /> Replit</a>
+&nbsp; <a href="https://github.com/Portkey-AI/gateway/blob/main/docs/installation-deployments.md"> 其它...</a>
 
 </sup>
-> 您的AI网关现在运行在 [http://localhost:8787](http://localhost:8787/) 🚀 <br>
+> 您的AI网关现在运行在 `http://localhost:8787` 🚀 <br>
 
 ### 使用方法
 
@@ -65,12 +65,12 @@ bashCopy codecurl '127.0.0.1:8787/v1/chat/completions' \
 
 || AI厂商 | 支持 | 流式 | 支持的端点 |
 |---|---|---|---|--|
-| <img src="docs/images/openai.png" width=25 />| OpenAI | ✅  |✅  | `/completions`, `/chat/completions`,`/embeddings`, `/assistants`, `/threads`, `/runs` |
-| <img src="docs/images/azure.png" width=25>| Azure OpenAI | ✅  |✅  | `/completions`, `/chat/completions`,`/embeddings` |
-| <img src="docs/images/anyscale.png" width=25>| Anyscale | ✅   | ✅  | `/chat/completions` |
+| | OpenAI | ✅  |✅  | `/completions`, `/chat/completions`,`/embeddings`, `/assistants`, `/threads`, `/runs` |
+| | Azure OpenAI | ✅  |✅  | `/completions`, `/chat/completions`,`/embeddings` |
+| | Anyscale | ✅   | ✅  | `/chat/completions` |
 | <img src="https://upload.wikimedia.org/wikipedia/commons/2/2d/Google-favicon-2015.png" width=25>| Google Gemini & Palm | ✅  |✅  | `/generateMessage`, `/generateText`, `/embedText` |
-| <img src="docs/images/anthropic.png" width=25>| Anthropic  | ✅  |✅  | `/messages`, `/complete` |
-| <img src="docs/images/cohere.png" width=25>| Cohere  | ✅  |✅  | `/generate`, `/embed`, `/rerank` |
+| | Anthropic  | ✅  |✅  | `/messages`, `/complete` |
+| | Cohere  | ✅  |✅  | `/generate`, `/embed`, `/rerank` |
 | <img src="https://assets-global.website-files.com/64f6f2c0e3f4c5a91c1e823a/654693d569494912cfc0c0d4_favicon.svg" width=25>| Together AI  | ✅  |✅  | `/chat/completions`, `/completions`, `/inference` |
 | <img src="https://www.perplexity.ai/favicon.svg" width=25>| Perplexity  | ✅  |✅  | `/chat/completions` |
 | <img src="https://docs.mistral.ai/img/favicon.ico" width=25>| Mistral  | ✅  |✅  | `/chat/completions`, `/embeddings` |
@@ -86,11 +86,7 @@ bashCopy codecurl '127.0.0.1:8787/v1/chat/completions' \
       <h4><a href="https://portkey.ai/docs/product/ai-gateway-streamline-llm-integrations/universal-api">统一API签名</a></h4>
       使用OpenAI的API签名连接100多个LLM。AI网关处理请求、响应和错误转换，因此您无需对代码进行任何更改。您可以使用OpenAI SDK本身连接到任何支持的LLM。
       <br><br>
-      <img src="docs/images/openai.png" height=40 />&nbsp;&nbsp;&nbsp;<img src="docs/images/azure.png" height=40 />&nbsp;&nbsp;&nbsp;
-      <img src="docs/images/anyscale.png" height=40 />&nbsp;&nbsp;&nbsp;
       <img src="https://upload.wikimedia.org/wikipedia/commons/2/2d/Google-favicon-2015.png" height=40 />&nbsp;&nbsp;&nbsp;<br><br>
-      <img src="docs/images/anthropic.png" height=40 />&nbsp;&nbsp;&nbsp;
-      <img src="docs/images/cohere.png" height=40 />&nbsp;&nbsp;&nbsp;
       <img src="https://assets-global.website-files.com/64f6f2c0e3f4c5a91c1e823a/654693d569494912cfc0c0d4_favicon.svg" height=40 />&nbsp;&nbsp;&nbsp;<br><br>
       <img src="https://www.perplexity.ai/favicon.svg" height=40 />&nbsp;&nbsp;&nbsp;
       <img src="https://docs.mistral.ai/img/favicon.ico" height=40 />&nbsp;&nbsp;&nbsp;
@@ -111,7 +107,6 @@ bashCopy codecurl '127.0.0.1:8787/v1/chat/completions' \
       <h4><a href="https://portkey.ai/docs/product/ai-gateway-streamline-llm-integrations/automatic-retries">自动重试</a></h4>
       临时问题不应该意味着手动重新运行。AI网关可以自动重试失败的请求多达5次。我们采用指数退避策略，间隔重试尝试以防止网络过载。
       <br><br>
-      <img src="https://github.com/roh26it/Rubeus/assets/971978/8a6e653c-94b2-4ba7-95c7-93544ee476b1" height=200 />
     </td>
     <td>
       <h4><a href="https://portkey.ai/docs/product/ai-gateway-streamline-llm-integrations/load-balancing">负载均衡</a></h4>
@@ -192,7 +187,7 @@ const client = new OpenAI({
 
 ## 部署 AI 网关
 
-[查看文档](docs/installation-deployments.md)了解如何在本地安装 AI 网关或者在流行的平台上部署它。
+[查看文档](https://github.com/Portkey-AI/gateway/blob/main/docs/installation-deployments.md)了解如何在本地安装 AI 网关或者在流行的平台上部署它。
 
 <br>
 
