@@ -1,5 +1,5 @@
 <p align="right">
-<a href=".github\CODE_OF_CONDUCT.md">English</a>|<strong>中文</strong> 
+<a href="./CODE_OF_CONDUCT.md">English</a>|<strong>中文</strong> 
 </p>
 
 # 贡献者公约行为准则
@@ -44,7 +44,7 @@
 ## 执行
 
 滥用、骚扰或以其他方式不可接受的行为可向负责执行的社区领导者报告到
-support@portkey.ai。
+support@portkey.ai 。
 所有投诉将进行及时和公正的审查和调查。
 
 所有社区领导者都有义务尊重任何事件报告者的隐私和安全。
@@ -88,5 +88,5 @@ https://www.contributor-covenant.org/version/2/0/code_of_conduct.html 查看。
 [homepage]: https://www.contributor-covenant.org
 
 有关本行为准则的常见问题解答，请参见
-https://www.contributor-covenant.org/faq。翻译版本可在
+https://www.contributor-covenant.org/faq 。翻译版本可在
 https://www.contributor-covenant.org/translations 查看。
