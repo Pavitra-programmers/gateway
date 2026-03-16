@@ -71,6 +71,10 @@ import { handler as azureShieldPrompt } from './azure/shieldPrompt';
 import { handler as crowdstrikeAidrHandler } from './crowdstrike-aidr/guardChatCompletion';
 import { handler as azureProtectedMaterial } from './azure/protectedMaterial';
 import { handler as zscalerGuardrails } from './zscaler/zscalerprotect';
+import {
+  guardrail as stringcostGuardrail,
+  logEvent as stringcostLogEvent,
+} from './stringcost/index';
 
 export const plugins = {
   default: {
@@ -189,5 +193,9 @@ export const plugins = {
   },
   zscaler: {
     guardrails: zscalerGuardrails,
+  },
+  stringcost: {
+    guardrail: stringcostGuardrail,
+    logEvent: stringcostLogEvent,
   },
 };
